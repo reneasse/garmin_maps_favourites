@@ -304,6 +304,52 @@ function intersectionKeepsOnlyWhatIsPresent(logger as Test.Logger) as Boolean {
     return true;
 }
 
+// -- Namen -------------------------------------------------------------------
+
+(:test)
+function namesAreCutToWhatTheDeviceKeeps(logger as Test.Logger) as Boolean {
+    // Der Fehler, an dem die App zuerst gescheitert ist: geschrieben wurde der
+    // volle Name, zurueck kam der gekuerzte, und damit fand sich kein einziger
+    // Wegpunkt wieder.
+    Test.assertEqual(WaypointWriter.shorten("Restaurant Hanedan"), "Restaurant Hane");
+    Test.assertEqual(WaypointWriter.shorten("Kurz"), "Kurz");
+    // Genau auf der Grenze wird nicht angefasst.
+    Test.assertEqual(WaypointWriter.shorten("ABCDEFGHIJKLMNO").length(), 15);
+    Test.assertEqual(WaypointWriter.shorten("ABCDEFGHIJKLMNOP").length(), 15);
+    return true;
+}
+
+(:test)
+function namesStayApartAfterCutting(logger as Test.Logger) as Boolean {
+    // Zwei Orte mit gleichem Rumpf duerfen nicht zu einem Wegpunkt verschmelzen:
+    // der zweite bliebe ungeschrieben, und beide gingen zusammen verloren.
+    var got = WaypointWriter.deviceNames([
+        "Restaurant Zum Alten Wirt",
+        "Restaurant Zum Neuen Wirt",
+        "Baecker"
+    ] as Array<String>);
+
+    Test.assertEqual(got.size(), 3);
+    // Der Schnitt faellt mitten in den Namen, das Leerzeichen am Ende bleibt
+    // stehen - das Geraet gibt es genauso zurueck, also darf es nicht weg.
+    Test.assertEqual(got[0], "Restaurant Zum ");
+    Test.assert(!got[1].equals(got[0]));
+    Test.assert(got[1].length() <= WaypointWriter.NAME_LIMIT);
+    Test.assertEqual(got[2], "Baecker");
+    return true;
+}
+
+(:test)
+function namesKeepTheirOrder(logger as Test.Logger) as Boolean {
+    // findPlace() liest _names und _places ueber denselben Index - kippt die
+    // Reihenfolge, landen Koordinaten unter dem falschen Namen.
+    var got = WaypointWriter.deviceNames(["Eins", "Zwei", "Drei"] as Array<String>);
+    Test.assertEqual(got[0], "Eins");
+    Test.assertEqual(got[1], "Zwei");
+    Test.assertEqual(got[2], "Drei");
+    return true;
+}
+
 // -- Wegpunkte ---------------------------------------------------------------
 
 (:test)
@@ -311,28 +357,30 @@ function waypointsRoundTripThroughTheDevice(logger as Test.Logger) as Boolean {
     // Der eine Test, der die Geraete-API wirklich anfasst: schreiben,
     // wiederfinden, gezielt loeschen. Genau daran haengt die Zusage, dass ein
     // aus der Google-Liste entfernter Ort auch vom Edge verschwindet.
+    //
+    // Es bleibt bei einem einzigen Wegpunkt: der Simulator fasst zehn Orte und
+    // bringt neun eigene mit. Der eine deckt trotzdem ab, worauf es ankommt -
+    // dass der zurueckgelesene Name dem geschriebenen gleicht.
     Test.assert(WaypointWriter.available());
     WaypointWriter.removeAll();
     Test.assertEqual(WaypointWriter.presentNames().size(), 0);
 
-    Test.assert(WaypointWriter.add("Testpunkt A", 48.13721, 11.57559));
-    Test.assert(WaypointWriter.add("Testpunkt B", 47.60000, 11.50000));
-    Test.assert(WaypointWriter.add("Testpunkt C", 49.00000, 12.00000));
+    var wanted = WaypointWriter.shorten("Restaurant Hanedan");
+    Test.assert(WaypointWriter.add(wanted, 50.73788, 7.08179));
 
     var present = WaypointWriter.presentNames();
-    Test.assertEqual(present.size(), 3);
-    Test.assert(Util.contains(present, "Testpunkt B"));
+    Test.assertEqual(present.size(), 1);
+    Test.assertEqual(present[0], wanted);
+    Test.assert(!Util.contains(present, "Restaurant Hanedan"));
 
     // Was eine andere Liste noch beansprucht, bleibt stehen.
-    var removed = WaypointWriter.removeNames(
-        ["Testpunkt A", "Testpunkt B"] as Array<String>,
-        ["Testpunkt B"] as Array<String>);
-    Test.assertEqual(removed, 1);
+    Test.assertEqual(
+        WaypointWriter.removeNames([wanted] as Array<String>, [wanted] as Array<String>), 0);
+    Test.assertEqual(WaypointWriter.presentNames().size(), 1);
 
-    present = WaypointWriter.presentNames();
-    Test.assertEqual(present.size(), 2);
-    Test.assert(!Util.contains(present, "Testpunkt A"));
-    Test.assert(Util.contains(present, "Testpunkt B"));
+    Test.assertEqual(
+        WaypointWriter.removeNames([wanted] as Array<String>, [] as Array<String>), 1);
+    Test.assertEqual(WaypointWriter.presentNames().size(), 0);
 
     WaypointWriter.removeAll();
     Test.assertEqual(WaypointWriter.presentNames().size(), 0);

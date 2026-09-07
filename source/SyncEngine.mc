@@ -10,9 +10,8 @@ using Toybox.System;
 //!
 //!   _havePresent  Im Vordergrund wird der Ist-Stand des Geraets einmal
 //!                 eingelesen. Damit kommen von Hand geloeschte Favoriten
-//!                 zurueck, verwaiste Eintraege verschwinden, und gespeichert
-//!                 wird der zurueckgelesene Name statt des gewuenschten - falls
-//!                 das Geraet kuerzt, bleibt der Abgleich trotzdem stabil.
+//!                 zurueck, verwaiste Eintraege verschwinden, und gemerkt wird
+//!                 nur, was danach wirklich am Geraet steht.
 //!                 Im Hintergrund waere dieser Durchlauf zu teuer: dort stehen
 //!                 nur 32 kB Heap zur Verfuegung.
 //!   _budget       Der Hintergrundlauf wendet hoechstens MAX_OPS_BACKGROUND
@@ -21,6 +20,11 @@ using Toybox.System;
 //!                 holt sie erneut und arbeitet den Rest ab. Ein Abbruch
 //!                 hinterlaesst so nie einen falschen, nur einen unfertigen
 //!                 Zustand.
+//!
+//! Verglichen wird durchgehend ueber Geraetenamen, nicht ueber die Namen aus
+//! der Google-Liste - siehe WaypointWriter.shorten(). Wer das aufweicht, bekommt
+//! wieder den Fehler, an dem die App zuerst gescheitert ist: nichts wird
+//! wiedergefunden, und die Aufraeumrunde loescht den eigenen Bestand.
 (:background)
 class SyncEngine {
 
@@ -46,6 +50,10 @@ class SyncEngine {
     hidden var _curPages as Number = 0;
     hidden var _curPage as Number = 0;
     hidden var _places as Array = [] as Array;
+
+    //! Die Geraetenamen zu _places, streng in derselben Reihenfolge -
+    //! findPlace() findet ueber diesen Index von einem Namen zum Ort zurueck.
+    hidden var _names as Array<String> = [] as Array<String>;
 
     hidden var _present as Array<String> = [] as Array<String>;
     hidden var _havePresent as Boolean = false;
@@ -92,6 +100,7 @@ class SyncEngine {
         _error = SyncStore.STAT_OK;
         _catalog = null;
         _places = [] as Array;
+        _names = [] as Array<String>;
 
         if (!WaypointWriter.available()) {
             finish(SyncStore.STAT_NO_API);
@@ -262,6 +271,7 @@ class SyncEngine {
 
     hidden function beginNextList() as Void {
         _places = [] as Array;
+        _names = [] as Array<String>;
 
         if (_queue.size() == 0) {
             finalise();
@@ -291,7 +301,11 @@ class SyncEngine {
     }
 
     hidden function applyCurrentList() as Void {
-        var desired = Feed.names(_places);
+        // Das Soll steht von hier an in Geraetenamen. Der Ortsspeicher kuerzt,
+        // und verglichen, gemerkt und geloescht wird ausschliesslich ueber den
+        // Namen - also muss das Soll schon so aussehen, wie es zurueckkommt.
+        _names = WaypointWriter.deviceNames(Feed.names(_places));
+        var desired = _names;
         var old = SyncStore.listNames(_curId);
 
         // Sperre 1: eine leer gewordene Liste ist fast immer ein kaputter
@@ -341,8 +355,10 @@ class SyncEngine {
             if (_ops >= _budget) { break; }
             var place = findPlace(toAdd[i]);
             if (place == null) { continue; }
+            // Geschrieben wird der schon gekuerzte Name, nicht der aus der
+            // Liste: nur so ist der zurueckgelesene mit dem gewuenschten gleich.
             var ok = WaypointWriter.add(
-                place[Feed.E_NAME] as String,
+                toAdd[i],
                 place[Feed.E_LAT] as Float,
                 place[Feed.E_LON] as Float
             );
@@ -352,21 +368,22 @@ class SyncEngine {
         return added;
     }
 
+    //! `name` ist ein Geraetename, also der gekuerzte. Gesucht wird ueber
+    //! _names, weil der Ort selbst noch den vollen Namen traegt.
     hidden function findPlace(name as String) as Array or Null {
-        for (var i = 0; i < _places.size(); i++) {
+        var n = _names.size();
+        if (n > _places.size()) { n = _places.size(); }
+        for (var i = 0; i < n; i++) {
+            if (!_names[i].equals(name)) { continue; }
             var p = _places[i];
-            if (p instanceof Array && p.size() > Feed.E_LON) {
-                var n = p[Feed.E_NAME];
-                if (n instanceof String && n.equals(name)) { return p; }
-            }
+            if (p instanceof Array && p.size() > Feed.E_LON) { return p; }
         }
         return null;
     }
 
-    //! Im Vordergrund wird der Ist-Stand zurueckgelesen und der gespeichert -
-    //! kuerzt das Geraet einen Namen, wuerde ein Soll-Ist-Vergleich sonst bei
-    //! jedem Lauf loeschen und neu anlegen. Im Hintergrund fehlt dafuer der
-    //! Speicher; dort korrigiert der naechste Vordergrundlauf.
+    //! Im Vordergrund wird der Ist-Stand zurueckgelesen und nur das gemerkt,
+    //! was dort auch wirklich steht. Im Hintergrund fehlt dafuer der Speicher;
+    //! dort korrigiert der naechste Vordergrundlauf.
     //!
     //! Rueckgabe: ob die Liste vollstaendig auf dem Geraet steht.
     //!
@@ -409,8 +426,14 @@ class SyncEngine {
     //! Aufraeumen am Ende: alles, was diese App angelegt hat und keine Liste
     //! mehr beansprucht, fliegt raus. Braucht den Ist-Stand, laeuft deshalb nur
     //! im Vordergrund.
+    //!
+    //! Und nur nach einem sauberen Lauf. Blieb eine Liste unfertig, ist der
+    //! gemerkte Bestand kleiner als der tatsaechliche - die Differenz waere
+    //! dann kein Waisenkind, sondern genau das, was gerade geschrieben wurde.
+    //! Genau so hat sich die App ihre eigenen Favoriten wieder abgeraeumt.
+    //! Liegenbleiben kostet nichts: der naechste vollstaendige Lauf raeumt auf.
     hidden function finalise() as Void {
-        if (_havePresent) {
+        if (_havePresent && _error == SyncStore.STAT_OK && !_partial) {
             var keep = SyncStore.allKnownNames();
             var orphans = Util.difference(WaypointWriter.presentNames(), keep);
             if (orphans.size() > 0) {
@@ -426,6 +449,7 @@ class SyncEngine {
         _running = false;
         _catalog = null;
         _places = [] as Array;
+        _names = [] as Array<String>;
         _present = [] as Array<String>;
         SyncStore.saveStatus(code, SyncStore.syncedCount(), _blocked);
         Log.d("sync fertig, code " + code.toString());

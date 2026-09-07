@@ -1,6 +1,6 @@
 {
   "pageSize": 25,
-  "nameMaxLength": 20,
+  "nameMaxLength": 15,
   "lists": [
     { "name": "Garmin" }
   ]

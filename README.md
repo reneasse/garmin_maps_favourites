@@ -168,7 +168,11 @@ Der Zustand liegt in `Application.Storage`, **ein Key je Liste** (`w<id>`) mit H
 
 Vier Entscheidungen, die man dem Code sonst nicht ansieht:
 
-**Gespeichert wird der zurückgelesene Name, nicht der gewünschte.** Kürzt das Gerät einen Wegpunktnamen beim Speichern, würde ein Soll-Ist-Vergleich gegen den Wunschnamen bei jedem Lauf löschen und neu anlegen. Nach dem Anwenden liest der Vordergrund deshalb `getAppWaypoints()` und schreibt den Ist-Stand.
+**Verglichen wird über Gerätenamen, nicht über die aus der Google-Liste.** Der Ortsspeicher schneidet bei **15 Zeichen** ab — auf Edge 540, 840, 1040 und 1050 nachgemessen; bis dahin kommt jeder Name unverändert zurück, samt Umlauten, Akzenten und Leerzeichen am Ende. Geschrieben wird deshalb schon der gekürzte Name (`WaypointWriter.shorten()`), und Soll wie Ist stehen von der Differenzbildung an in dieser Form. Fallen zwei Orte auf denselben Rumpf, bekommt der zweite eine Kennziffer (`~2`) — für den namensbasierten Abgleich wären sie sonst derselbe Wegpunkt.
+
+Wird das versäumt, bricht die App auf eine Art zusammen, die man ihr nicht ansieht: der volle Name geht hinein, der gekürzte kommt zurück, **kein einziger** Wegpunkt findet sich wieder, die Liste gilt als unvollständig, es wird nichts gemerkt — und die Aufräumrunde hält den gerade geschriebenen Bestand für verwaist und löscht ihn. Sichtbar wird das als `Teilweise übertragen · 0 Favoriten` bei leerer Gerätenavigation.
+
+**Aufgeräumt wird nur nach einem sauberen Lauf.** Die Waisen-Suche am Ende vergleicht den Gerätebestand mit dem, was sich die App gemerkt hat. Blieb eine Liste unfertig, ist das Gemerkte kleiner als der tatsächliche Bestand — die Differenz wäre dann kein Waisenkind, sondern genau das eben Geschriebene. Liegenbleiben kostet nichts: der nächste vollständige Lauf räumt auf.
 
 **`saveWaypoint()` lügt, wenn die Standortliste voll ist** — es meldet weiter Erfolg, und der Wegpunkt fehlt trotzdem. Im Simulator ist das reproduzierbar: er nimmt nur neun App-Wegpunkte an und quittiert jeden weiteren mit Erfolg. Deshalb entscheidet ausschließlich der zurückgelesene Bestand, ob eine Liste als fertig gilt. Ohne diese Prüfung speichert die App den Hash, meldet „Aktuell" und hat die Hälfte der Orte nie geschrieben. Ist etwas offen geblieben, steht `Teilweise übertragen` und der nächste Lauf macht weiter.
 
@@ -176,7 +180,7 @@ Vier Entscheidungen, die man dem Code sonst nicht ansieht:
 
 **Unfertig wird nicht gemerkt, sondern vergessen.** Der Hintergrundlauf wendet höchstens 20 Änderungen an. Was liegen bleibt, landet nicht als Plan im Storage — stattdessen bleibt der Hash der Liste leer, und der nächste Lauf holt sie erneut und arbeitet den Rest ab. Ein Abbruch mitten drin hinterlässt so nie einen falschen, nur einen unfertigen Zustand.
 
-**Namen sind der einzige Schlüssel.** `saveWaypoint()` gibt keine Id zurück, und `Waypoint` kennt kein `getLocation()`. Wiedergefunden wird ausschließlich über den Namen — deshalb macht das Backend die Namen eindeutig (` 2`, ` 3` …) und kürzt sie auf 20 Zeichen, bevor sie das Gerät je sieht.
+**Namen sind der einzige Schlüssel.** `saveWaypoint()` gibt keine Id zurück, und `Waypoint` kennt kein `getLocation()`. Wiedergefunden wird ausschließlich über den Namen — deshalb macht das Backend die Namen eindeutig (` 2`, ` 3` …) und kürzt sie auf 15 Zeichen, bevor sie das Gerät je sieht. Die App kürzt trotzdem noch einmal selbst: sie muss auch mit älteren, längeren Daten richtig rechnen. Taucht auf dem Gerät ein `~2` auf, waren die Daten breiter als der Ortsspeicher.
 
 ### Sicherungen
 
@@ -261,7 +265,8 @@ Eigene Codes bleiben unter 100. Alles ab 100 ist ein wörtlicher HTTP-Status, al
 
 **Getestet im Simulator (Edge 1040):**
 
-- 24 Unit-Tests, davon einer gegen die echte Geräte-API: schreiben, wiederfinden, gezielt löschen über `PersistedContent` — inklusive der Regel, dass ein von einer zweiten Liste beanspruchter Name stehen bleibt.
+- 27 Unit-Tests, davon einer gegen die echte Geräte-API: schreiben, wiederfinden, gezielt löschen über `PersistedContent` — inklusive der Regel, dass ein von einer zweiten Liste beanspruchter Name stehen bleibt, und der Zusicherung, dass der zurückgelesene Name dem geschriebenen gleicht.
+- **Die Zeichengrenze des Ortsspeichers**, auf Edge 540, 840, 1040 und 1050 einzeln nachgemessen: 15 Zeichen, darüber wird wortlos abgeschnitten. Bis dahin ist der Weg durch den Speicher verlustfrei — geprüft mit Akzenten (`é`), Umlauten, `ß`, Leerzeichen am Ende und `~`.
 - **Der komplette Weg, dreimal hintereinander gegen einen lokalen HTTP-Server:**
   1. Erster Lauf: Katalog + zwei Seiten geholt, 8 Orte als Wegpunkte geschrieben, beide Hashes gespeichert, Status *Aktuell*.
   2. Zweiter Lauf ohne Änderung: nur `index.json` — beide Listen per Hash übersprungen.
@@ -269,14 +274,14 @@ Eigene Codes bleiben unter 100. Alles ab 100 ist ein wörtlicher HTTP-Status, al
 - Die Veröffentlichungssperre im Backend: eine von 30 auf 5 geschrumpfte Liste wurde abgelehnt, der alte Stand blieb stehen, der Lauf endete mit Exit-Code 1.
 - Totalausfall des Scrapers bei bereits veröffentlichtem Stand: der Katalog blieb unverändert erhalten, Exit-Code 1 — das Gerät sieht unveränderte Hashes und rührt nichts an.
 - Build für alle sechs Zielgeräte plus `.iq`-Store-Paket.
-- 14 Node-Tests für Normalisierung, Paging, Hashing, Secret-Auswertung und die Sperre.
+- 19 Node-Tests für Normalisierung, Paging, Hashing, Secret-Auswertung und die Sperre.
 
-Der Simulator nimmt nur **neun** App-Wegpunkte an; die End-to-End-Läufe liefen deshalb mit acht Orten. Größere Mengen sind im Simulator nicht prüfbar — genau diese Grenze hat aber den `saveWaypoint()`-Fehlschluss oben zutage gefördert.
+Der Simulator hält insgesamt **zehn** Orte und bringt neun eigene mit — für die App bleibt genau einer. Jeder weitere `saveWaypoint()`-Aufruf meldet Erfolg und schreibt nichts. Größere Mengen sind im Simulator deshalb nicht prüfbar, und der Geräte-Test kommt mit einem einzigen Wegpunkt aus.
 
 **Nicht getestet:**
 
 - **Der Scraper gegen eine echte Google-Liste.** Er ist gegen das aktuelle Markup geschrieben, aber ungeprüft — hier ist zuerst mit Nacharbeit zu rechnen. `node scrape.mjs` meldet klar, wenn er nichts findet, und die Sperre in `build.mjs` fängt den Rest ab.
-- **Alles auf echter Hardware.** Offen: ob der Hintergrunddienst nach dem Einschalten wirklich zeitnah anläuft, ob `saveWaypoint()` lange Namen kürzt, wie viele Wegpunkte das Gerät tatsächlich annimmt, und ob die App-eigenen Favoriten beim Deinstallieren mitgelöscht werden.
+- **Alles auf echter Hardware.** Offen: ob der Hintergrunddienst nach dem Einschalten wirklich zeitnah anläuft, ob die Zeichengrenze auf dem Gerät ebenfalls bei 15 liegt (der Simulator sagt das für alle vier geprüften Modelle), wie viele Wegpunkte das Gerät tatsächlich annimmt, und ob die App-eigenen Favoriten beim Deinstallieren mitgelöscht werden.
 - Die anderen fünf Gerätemodelle jenseits des Builds.
 - Der Hintergrunddienst selbst — im Simulator über *Simulation → Background Events → Temporal Event* auslösbar, hier nicht durchgespielt.
 

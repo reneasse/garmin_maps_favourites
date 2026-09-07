@@ -12,6 +12,12 @@ using Toybox.Position;
 (:background)
 module WaypointWriter {
 
+    //! Der Ortsspeicher schneidet laengere Namen wortlos ab. Fuenfzehn Zeichen
+    //! sind auf Edge 540, 840, 1040 und 1050 nachgemessen; bis dahin kommt jeder
+    //! Name unveraendert zurueck - samt Umlauten, Akzenten und Leerzeichen am
+    //! Ende. Darueber hinaus nicht, und daran haengt der ganze Abgleich.
+    const NAME_LIMIT = 15;
+
     //! Aeltere Firmware kennt getAppWaypoints nicht; ohne sie waere Loeschen
     //! unmoeglich und die App wuerde nur noch Wegpunkte anhaeufen.
     (:background)
@@ -20,6 +26,51 @@ module WaypointWriter {
         if (!(PersistedContent has :getAppWaypoints)) { return false; }
         if (!(PersistedContent has :saveWaypoint)) { return false; }
         return true;
+    }
+
+    //! Der Name, unter dem das Geraet einen Ort fuehren wird.
+    //!
+    //! Der Abgleich vergleicht Soll und Ist ausschliesslich ueber den Namen.
+    //! Schreibt man einen zu langen, kommt er gekuerzt zurueck, kein einziger
+    //! Wegpunkt findet sich wieder - die App meldet "teilweise uebertragen",
+    //! merkt sich nichts, und die Aufraeumrunde haelt alles gerade Geschriebene
+    //! fuer verwaist und loescht es. Deshalb wird schon das Soll gekuerzt.
+    (:background)
+    function shorten(name as String) as String {
+        if (name.length() <= NAME_LIMIT) { return name; }
+        return name.substring(0, NAME_LIMIT) as String;
+    }
+
+    //! Die Soll-Namen einer Liste so, wie sie vom Geraet zurueckkommen werden.
+    //!
+    //! Zwei Orte koennen auf denselben Rumpf fallen - "Restaurant Zum Alten
+    //! Wirt" und "Restaurant Zum Neuen Wirt" enden beide bei "Restaurant Zum".
+    //! Fuer den namensbasierten Abgleich waeren das derselbe Wegpunkt: der
+    //! zweite bliebe ungeschrieben und beide verschwaenden gemeinsam. Der
+    //! Doppelgaenger bekommt deshalb eine Kennziffer.
+    (:background)
+    function deviceNames(names as Array<String>) as Array<String> {
+        var out = [] as Array<String>;
+        for (var i = 0; i < names.size(); i++) {
+            out.add(distinct(shorten(names[i]), out));
+        }
+        return out;
+    }
+
+    //! `name` selbst, oder die erste freie Variante mit angehaengter Kennziffer.
+    (:background)
+    function distinct(name as String, taken as Array<String>) as String {
+        if (!Util.contains(taken, name)) { return name; }
+        for (var n = 2; n < 100; n++) {
+            var suffix = "~" + n.toString();
+            var room = NAME_LIMIT - suffix.length();
+            var stem = (name.length() > room) ? name.substring(0, room) as String : name;
+            var candidate = stem + suffix;
+            if (!Util.contains(taken, candidate)) { return candidate; }
+        }
+        // Mehr als achtundneunzig Orte mit demselben Rumpf: dann steht eben
+        // einer doppelt da. Das ist immer noch besser als gar kein Ergebnis.
+        return name;
     }
 
     //! Namen aller Wegpunkte, die dieser App gehoeren.

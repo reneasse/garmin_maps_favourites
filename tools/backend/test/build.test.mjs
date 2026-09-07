@@ -7,37 +7,23 @@ import {
   SCHEMA_VERSION
 } from '../build.mjs';
 import {
-  coordsFromHref, toPlaces, parseUrlOverrides, usableUrl, describePage
+  parseUrlOverrides, usableUrl, splitJsonObjects, unwrapPayload,
+  placesFromPayload, dedupe
 } from '../scrape.mjs';
 
 /**
- * describePage() liest die Seite ueber page.evaluate aus. Der Rumpf laeuft
- * sonst im Browser und greift auf `document` zu - hier wird beides gestellt,
- * damit die Auswertung ohne Browser pruefbar bleibt.
+ * Eine Antwort in der Form, die Google liefert: ein Stueck {"c":..,"d":".."},
+ * dessen d-Feld die Nutzlast als JSON-Text traegt, mit XSSI-Vorspann.
+ *
+ * Nachgebaut statt mitgeschnitten - eine echte Antwort enthaelt Rezensionen
+ * samt Klarnamen Dritter, und die haben in einem Repository nichts zu suchen.
+ * Die Form stammt aus einer echten Antwort, die Inhalte sind erfunden.
  */
-function fakePage({ hrefs = [], feed = false, login = false, title = 'Liste', url = 'https://x' }) {
-  const document = {
-    querySelectorAll: (selector) => (selector === 'a[href]'
-      ? hrefs.map((href) => ({ getAttribute: () => href }))
-      : []),
-    querySelector: (selector) => {
-      if (selector.includes('role="feed"')) return feed ? {} : null;
-      if (selector.includes('ServiceLogin')) return login ? {} : null;
-      return null;
-    }
-  };
-  return {
-    title: async () => title,
-    url: () => url,
-    evaluate: async (fn, arg) => {
-      globalThis.document = document;
-      try {
-        return fn(arg);
-      } finally {
-        delete globalThis.document;
-      }
-    }
-  };
+function antwort(...orte) {
+  const payload = `[["*",[[null,null,${orte.map((o) =>
+    `null,[null,null,${o.lat},${o.lon}],${JSON.stringify(o.id)},${JSON.stringify(o.name)},null,["Supermarkt"]`
+  ).join(',')}]]]]`;
+  return JSON.stringify({ c: 0, d: `)]}'\n${payload}`, e: null });
 }
 
 test('Namen werden gekuerzt und von Whitespace befreit', () => {
@@ -152,19 +138,6 @@ test('ohne brauchbaren Vorgaenger wird immer geschrieben', () => {
   assert.equal(catalogChanged({ v: SCHEMA_VERSION + 1, l: [] }, []), true);
 });
 
-test('Koordinaten kommen aus dem Ortslink, nicht aus dem Kartenmittelpunkt', () => {
-  const href = 'https://www.google.com/maps/place/Cafe/@48.0,11.0,17z/data=!4m7!3m6!8m2!3d48.13721!4d11.57559';
-  assert.deepEqual(coordsFromHref(href), { lat: 48.13721, lon: 11.57559 });
-
-  // Ohne !3d/!4d bleibt nur der Mittelpunkt.
-  assert.deepEqual(
-    coordsFromHref('https://www.google.com/maps/place/X/@48.5,11.5,17z'),
-    { lat: 48.5, lon: 11.5 });
-
-  assert.equal(coordsFromHref('https://www.google.com/maps/place/X'), null);
-  assert.equal(coordsFromHref(null), null);
-});
-
 test('Share-Links koennen aus dem Secret kommen', () => {
   assert.deepEqual(
     parseUrlOverrides('{"Cafes":"https://maps.app.goo.gl/abc"}'),
@@ -185,42 +158,63 @@ test('Platzhalter zaehlen nicht als Link', () => {
   assert.equal(usableUrl(''), false);
 });
 
-test('die Seitenbeschreibung nennt die Anmeldeschranke nur ohne Panel', async () => {
-  // Der Fall aus dem Lauf: zwei Links, kein Panel, Anmeldung angeboten.
-  const gesperrt = await describePage(fakePage({
-    hrefs: ['/intl/de', '/ServiceLogin?hl=de&continue=x'],
-    feed: false,
-    login: true
-  }));
-  assert.match(gesperrt, /nicht oeffentlich geteilt/);
-  assert.match(gesperrt, /role=feed fehlt/);
+test('aneinandergehaengte JSON-Stuecke werden einzeln getrennt', () => {
+  assert.deepEqual(splitJsonObjects('{"a":1}{"b":2}'), ['{"a":1}', '{"b":2}']);
 
-  // Angemeldet wird man auch auf einer heilen Seite nicht - dort steht der
-  // Anmeldelink neben einem funktionierenden Panel und bedeutet nichts.
-  const heil = await describePage(fakePage({
-    hrefs: ['https://www.google.com/maps/place/X/@48.1,11.1', '/ServiceLogin'],
-    feed: true,
-    login: true
-  }));
-  assert.doesNotMatch(heil, /nicht oeffentlich geteilt/);
-  assert.match(heil, /role=feed vorhanden/);
+  // Klammern im Text duerfen nicht als Ende zaehlen, Escapes ebenso wenig.
+  assert.deepEqual(splitJsonObjects('{"a":"}{"}'), ['{"a":"}{"}']);
+  assert.deepEqual(splitJsonObjects('{"a":"\\""}'), ['{"a":"\\""}']);
+
+  assert.deepEqual(splitJsonObjects(''), []);
+  assert.deepEqual(splitJsonObjects(null), []);
+  // Angeschnittenes bleibt liegen, statt halb verwertet zu werden.
+  assert.deepEqual(splitJsonObjects('{"a":1'), []);
 });
 
-test('die Seitenbeschreibung traegt keine Inhalte ins Log', async () => {
-  const text = await describePage(fakePage({
-    hrefs: ['https://www.google.com/maps/place/Geheimes+Cafe/@50.73,7.05,14z'],
-    feed: true
-  }));
-  assert.doesNotMatch(text, /Geheimes/);
-  assert.doesNotMatch(text, /50\.73/);
-  assert.match(text, /\/maps\/place/);
+test('die Nutzlast kommt aus den d-Feldern, ohne XSSI-Vorspann', () => {
+  const zwei = JSON.stringify({ c: 0, d: ')]}\'\n[1,' }) + JSON.stringify({ c: 1, d: '2]' });
+  assert.equal(unwrapPayload(zwei), '[1,2]');
+
+  // Nichts Verwertbares darf still zu einer leeren Nutzlast werden.
+  assert.equal(unwrapPayload(''), '');
+  assert.equal(unwrapPayload('{"c":0}'), '');
 });
 
-test('toPlaces wirft Treffer ohne Namen oder Koordinaten weg', () => {
-  const places = toPlaces([
-    { name: '  Cafe Central ', href: 'x!3d48.1!4d11.1' },
-    { name: '', href: 'x!3d48.2!4d11.2' },
-    { name: 'Ohne Koordinaten', href: 'https://www.google.com/maps/place/X' }
-  ]);
-  assert.deepEqual(places, [{ name: 'Cafe Central', lat: 48.1, lon: 11.1 }]);
+test('Orte kommen aus der Antwort, samt Namen mit Sonderzeichen', () => {
+  const places = placesFromPayload(antwort(
+    { id: '0x47bee1eb3abfab1d:0xbaafb8a90b504ece', name: 'REWE Frédéric Cahon', lat: 50.7324447, lon: 7.075263 },
+    { id: '0xaaaa:0xbbbb', name: 'Cafe "Zum Eck"', lat: 48.13721, lon: 11.57559 }
+  ));
+
+  assert.equal(places.length, 2);
+  assert.deepEqual(places[0], {
+    id: '0x47bee1eb3abfab1d:0xbaafb8a90b504ece',
+    name: 'REWE Frédéric Cahon',
+    lat: 50.7324447,
+    lon: 7.075263
+  });
+  assert.equal(places[1].name, 'Cafe "Zum Eck"');
+});
+
+test('nur Orte zaehlen, nicht jedes Koordinatenpaar', () => {
+  // Fotos und Rezensionen tragen dieselbe [null,null,lat,lon]-Form, aber keine
+  // Ortskennung dahinter. Ohne diese Bedingung wanderten sie als Favoriten mit.
+  const foto = '{"c":0,"d":")]}\'\\n[[[2],[[null,null,50.7321838,7.0752618]]]]"}';
+  assert.deepEqual(placesFromPayload(foto), []);
+
+  assert.deepEqual(placesFromPayload(''), []);
+  assert.deepEqual(placesFromPayload('kein json'), []);
+});
+
+test('dedupe haelt jeden Ort nur einmal und legt die Kennung ab', () => {
+  const roh = [
+    { id: '0xa:0xb', name: 'Cafe', lat: 48.1, lon: 11.1 },
+    { id: '0xa:0xb', name: 'Cafe', lat: 48.1, lon: 11.1 },
+    { id: '0xc:0xd', name: 'Bar', lat: 48.2, lon: 11.2 }
+  ];
+  const out = dedupe(roh);
+  assert.equal(out.length, 2);
+  // build.mjs erwartet genau diese drei Felder.
+  assert.deepEqual(Object.keys(out[0]).sort(), ['lat', 'lon', 'name']);
+  assert.deepEqual(dedupe(null), []);
 });

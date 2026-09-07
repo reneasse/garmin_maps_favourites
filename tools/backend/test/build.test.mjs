@@ -6,7 +6,39 @@ import {
   hashEntries, listId, paginate, guard, findPrevious, catalogChanged,
   SCHEMA_VERSION
 } from '../build.mjs';
-import { coordsFromHref, toPlaces, parseUrlOverrides, usableUrl } from '../scrape.mjs';
+import {
+  coordsFromHref, toPlaces, parseUrlOverrides, usableUrl, describePage
+} from '../scrape.mjs';
+
+/**
+ * describePage() liest die Seite ueber page.evaluate aus. Der Rumpf laeuft
+ * sonst im Browser und greift auf `document` zu - hier wird beides gestellt,
+ * damit die Auswertung ohne Browser pruefbar bleibt.
+ */
+function fakePage({ hrefs = [], feed = false, login = false, title = 'Liste', url = 'https://x' }) {
+  const document = {
+    querySelectorAll: (selector) => (selector === 'a[href]'
+      ? hrefs.map((href) => ({ getAttribute: () => href }))
+      : []),
+    querySelector: (selector) => {
+      if (selector.includes('role="feed"')) return feed ? {} : null;
+      if (selector.includes('ServiceLogin')) return login ? {} : null;
+      return null;
+    }
+  };
+  return {
+    title: async () => title,
+    url: () => url,
+    evaluate: async (fn, arg) => {
+      globalThis.document = document;
+      try {
+        return fn(arg);
+      } finally {
+        delete globalThis.document;
+      }
+    }
+  };
+}
 
 test('Namen werden gekuerzt und von Whitespace befreit', () => {
   assert.equal(normaliseName('  Cafe   Central  ', 20), 'Cafe Central');
@@ -151,6 +183,37 @@ test('Platzhalter zaehlen nicht als Link', () => {
   assert.equal(usableUrl('https://maps.app.goo.gl/REPLACE_ME'), false);
   assert.equal(usableUrl(undefined), false);
   assert.equal(usableUrl(''), false);
+});
+
+test('die Seitenbeschreibung nennt die Anmeldeschranke nur ohne Panel', async () => {
+  // Der Fall aus dem Lauf: zwei Links, kein Panel, Anmeldung angeboten.
+  const gesperrt = await describePage(fakePage({
+    hrefs: ['/intl/de', '/ServiceLogin?hl=de&continue=x'],
+    feed: false,
+    login: true
+  }));
+  assert.match(gesperrt, /nicht oeffentlich geteilt/);
+  assert.match(gesperrt, /role=feed fehlt/);
+
+  // Angemeldet wird man auch auf einer heilen Seite nicht - dort steht der
+  // Anmeldelink neben einem funktionierenden Panel und bedeutet nichts.
+  const heil = await describePage(fakePage({
+    hrefs: ['https://www.google.com/maps/place/X/@48.1,11.1', '/ServiceLogin'],
+    feed: true,
+    login: true
+  }));
+  assert.doesNotMatch(heil, /nicht oeffentlich geteilt/);
+  assert.match(heil, /role=feed vorhanden/);
+});
+
+test('die Seitenbeschreibung traegt keine Inhalte ins Log', async () => {
+  const text = await describePage(fakePage({
+    hrefs: ['https://www.google.com/maps/place/Geheimes+Cafe/@50.73,7.05,14z'],
+    feed: true
+  }));
+  assert.doesNotMatch(text, /Geheimes/);
+  assert.doesNotMatch(text, /50\.73/);
+  assert.match(text, /\/maps\/place/);
 });
 
 test('toPlaces wirft Treffer ohne Namen oder Koordinaten weg', () => {

@@ -133,7 +133,7 @@ async function acceptConsent(page) {
  * Struktur, keine Inhalte: die Listen sind nicht oeffentlich, und ein Log ist
  * es unter Umstaenden schon.
  */
-async function describePage(page) {
+export async function describePage(page) {
   const seen = await page.evaluate((feedSelector) => {
     const shapes = new Map();
     for (const a of document.querySelectorAll('a[href]')) {
@@ -148,6 +148,7 @@ async function describePage(page) {
     return {
       links: document.querySelectorAll('a[href]').length,
       feed: document.querySelector(feedSelector) != null,
+      login: document.querySelector('a[href*="ServiceLogin"]') != null,
       shapes: [...shapes.entries()]
         .sort((a, b) => b[1] - a[1])
         .slice(0, 6)
@@ -155,9 +156,19 @@ async function describePage(page) {
     };
   }, FEED);
 
+  // Ein Anmeldelink allein sagt nichts - den zeigt Google auch auf einer
+  // funktionierenden Seite jedem, der nicht angemeldet ist. Erst zusammen mit
+  // dem fehlenden Panel wird daraus eine Aussage: dann ist die Anmeldung nicht
+  // ein Angebot, sondern die Bedingung.
+  const gate = seen.login && !seen.feed
+    ? ' - Google bietet nur eine Anmeldung an und kein Panel, die Liste ist '
+      + 'demnach nicht oeffentlich geteilt'
+    : '';
+
   return `Seite "${await page.title()}" (${page.url()}), ${seen.links} Links, `
     + `role=feed ${seen.feed ? 'vorhanden' : 'fehlt'}`
-    + (seen.shapes.length > 0 ? `, haeufigste Pfade: ${seen.shapes.join(', ')}` : '');
+    + (seen.shapes.length > 0 ? `, haeufigste Pfade: ${seen.shapes.join(', ')}` : '')
+    + gate;
 }
 
 /** Scrollt das Listenpanel, bis die Anzahl der Eintraege stehen bleibt. */

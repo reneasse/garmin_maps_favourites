@@ -20,6 +20,7 @@ const CACHE_DIR = path.join(HERE, '.cache');
 const CACHE = path.join(CACHE_DIR, 'raw.json');
 
 const PLACE_LINK = 'a[href*="/maps/place/"]';
+const FEED = 'div[role="feed"]';
 
 // Ohne Einwilligung zeigt Google statt der Karte eine Zwischenseite. Am
 // Arbeitsplatz klickt man sie einmal weg, auf dem Runner kommt sie bei jedem
@@ -123,19 +124,55 @@ async function acceptConsent(page) {
   return false;
 }
 
+/**
+ * Kurzbeschreibung der Seite fuer den Fehlerfall.
+ *
+ * "Nichts gefunden" allein ist beim naechsten Bruch wertlos - es sagt nicht,
+ * ob eine ganz andere Seite kam oder nur das Markup gewandert ist. Titel, URL,
+ * die Zahl der Links und ihre haeufigsten Formen sagen das. Absichtlich nur
+ * Struktur, keine Inhalte: die Listen sind nicht oeffentlich, und ein Log ist
+ * es unter Umstaenden schon.
+ */
+async function describePage(page) {
+  const seen = await page.evaluate((feedSelector) => {
+    const shapes = new Map();
+    for (const a of document.querySelectorAll('a[href]')) {
+      // Nur das Geruest des Pfades, nie die Ortsangabe dahinter - auch das
+      // @-Segment nicht, das sind Koordinaten.
+      const path = a.getAttribute('href').replace(/^https?:\/\/[^/]+/, '');
+      const key = path.split('/').slice(0, 3)
+        .map((segment) => (segment.startsWith('@') ? '@...' : segment))
+        .join('/');
+      shapes.set(key, (shapes.get(key) ?? 0) + 1);
+    }
+    return {
+      links: document.querySelectorAll('a[href]').length,
+      feed: document.querySelector(feedSelector) != null,
+      shapes: [...shapes.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([key, n]) => `${key} (${n})`)
+    };
+  }, FEED);
+
+  return `Seite "${await page.title()}" (${page.url()}), ${seen.links} Links, `
+    + `role=feed ${seen.feed ? 'vorhanden' : 'fehlt'}`
+    + (seen.shapes.length > 0 ? `, haeufigste Pfade: ${seen.shapes.join(', ')}` : '');
+}
+
 /** Scrollt das Listenpanel, bis die Anzahl der Eintraege stehen bleibt. */
 async function scrollFeed(page, { rounds = 60, settle = 3, pause = 1200 } = {}) {
   let last = -1;
   let stable = 0;
 
   for (let i = 0; i < rounds && stable < settle; i++) {
-    const count = await page.evaluate((selector) => {
-      const feed = document.querySelector('div[role="feed"]')
+    const count = await page.evaluate(({ link, feed: feedSelector }) => {
+      const feed = document.querySelector(feedSelector)
         ?? document.querySelector('div[role="main"]')
         ?? document.scrollingElement;
       if (feed) feed.scrollTop = feed.scrollHeight;
-      return document.querySelectorAll(selector).length;
-    }, PLACE_LINK);
+      return document.querySelectorAll(link).length;
+    }, { link: PLACE_LINK, feed: FEED });
 
     if (count === last) {
       stable++;
@@ -150,7 +187,13 @@ async function scrollFeed(page, { rounds = 60, settle = 3, pause = 1200 } = {}) 
 
 export async function scrapeList(url, { locale = 'de-DE', timeout = 60000, headless = true } = {}) {
   const { chromium } = await import('playwright');
-  const browser = await chromium.launch({ headless });
+  // Ohne das Flag setzt Chromium navigator.webdriver, und Google liefert
+  // Automaten gern eine andere Seite aus als Besuchern. Der User-Agent unten
+  // allein reicht dafuer nicht.
+  const browser = await chromium.launch({
+    headless,
+    args: ['--disable-blink-features=AutomationControlled']
+  });
   try {
     const context = await browser.newContext({
       locale,
@@ -166,14 +209,15 @@ export async function scrapeList(url, { locale = 'de-DE', timeout = 60000, headl
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
     await acceptConsent(page);
 
+    // Auf das Panel warten, nicht auf die Ortslinks: Google haengt die
+    // Eintraege nachtraeglich hinein, und ein Teil davon kommt erst beim
+    // Scrollen. Wer hier auf Ortslinks wartet, wartet unter Umstaenden auf
+    // etwas, das ohne das Scrollen weiter unten nie erscheint - und
+    // scrollFeed() kaeme nach dieser Zeile nie an die Reihe.
     try {
-      await page.waitForSelector(PLACE_LINK, { timeout });
+      await page.waitForSelector(`${FEED}, ${PLACE_LINK}`, { timeout });
     } catch {
-      // Ein blanker Timeout sagt nur, dass nichts kam. Wo der Browser
-      // stehengeblieben ist, sagt beim naechsten Mal, woran es lag:
-      // Einwilligungsseite, Anmeldung oder tatsaechlich neues Markup.
-      throw new Error(`Keine Ortslinks nach ${timeout} ms - `
-        + `Seite steht auf "${await page.title()}" (${page.url()})`);
+      throw new Error(`Kein Listenpanel nach ${timeout} ms - ${await describePage(page)}`);
     }
     await scrollFeed(page);
 
@@ -185,7 +229,8 @@ export async function scrapeList(url, { locale = 'de-DE', timeout = 60000, headl
 
     const places = toPlaces(hits);
     if (places.length === 0) {
-      throw new Error('Keine Orte gefunden - Liste nicht oeffentlich oder Markup geaendert');
+      throw new Error('Keine Orte gefunden - Liste nicht oeffentlich oder Markup '
+        + `geaendert. ${await describePage(page)}`);
     }
     return places;
   } finally {

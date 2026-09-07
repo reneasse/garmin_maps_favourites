@@ -47,6 +47,8 @@ jobs:
       - name: Listen auslesen
         working-directory: tools/backend
         continue-on-error: true
+        env:
+          LIST_URLS: ${{ secrets.LIST_URLS }}
         run: node scrape.mjs
 
       - name: JSON erzeugen
@@ -57,8 +59,15 @@ jobs:
           LIST_SALT: ${{ secrets.LIST_SALT }}
         run: node build.mjs
 
+      # docs/ fehlt, wenn schon der Abruf gescheitert ist - dann gibt es hier
+      # nichts zu tun, und "git add docs" wuerde nur mit einem Pfadfehler
+      # abbrechen und den echten Grund verdecken.
       - name: Veroeffentlichen
         run: |
+          if [ ! -d docs ]; then
+            echo "docs/ wurde nicht erzeugt - nichts zu veroeffentlichen"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs

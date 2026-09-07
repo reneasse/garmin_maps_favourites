@@ -5,7 +5,7 @@ import {
   normaliseName, normalise, roundCoord, validCoord,
   hashEntries, listId, paginate, guard, findPrevious
 } from '../build.mjs';
-import { coordsFromHref, toPlaces } from '../scrape.mjs';
+import { coordsFromHref, toPlaces, parseUrlOverrides, usableUrl } from '../scrape.mjs';
 
 test('Namen werden gekuerzt und von Whitespace befreit', () => {
   assert.equal(normaliseName('  Cafe   Central  ', 20), 'Cafe Central');
@@ -110,6 +110,26 @@ test('Koordinaten kommen aus dem Ortslink, nicht aus dem Kartenmittelpunkt', () 
 
   assert.equal(coordsFromHref('https://www.google.com/maps/place/X'), null);
   assert.equal(coordsFromHref(null), null);
+});
+
+test('Share-Links koennen aus dem Secret kommen', () => {
+  assert.deepEqual(
+    parseUrlOverrides('{"Cafes":"https://maps.app.goo.gl/abc"}'),
+    { Cafes: 'https://maps.app.goo.gl/abc' });
+
+  // Unbrauchbares darf nie eine leere Liste vortaeuschen, sondern faellt weg.
+  assert.deepEqual(parseUrlOverrides(undefined), {});
+  assert.deepEqual(parseUrlOverrides(''), {});
+  assert.deepEqual(parseUrlOverrides('kein json'), {});
+  assert.deepEqual(parseUrlOverrides('["a"]'), {});
+  assert.deepEqual(parseUrlOverrides('{"Cafes":123}'), {});
+});
+
+test('Platzhalter zaehlen nicht als Link', () => {
+  assert.equal(usableUrl('https://maps.app.goo.gl/abc'), true);
+  assert.equal(usableUrl('https://maps.app.goo.gl/REPLACE_ME'), false);
+  assert.equal(usableUrl(undefined), false);
+  assert.equal(usableUrl(''), false);
 });
 
 test('toPlaces wirft Treffer ohne Namen oder Koordinaten weg', () => {

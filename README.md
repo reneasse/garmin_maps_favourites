@@ -87,34 +87,47 @@ Zwei Felder tragen mehr Gewicht, als sie aussehen:
 
 Liste öffnen → *Teilen* → Link erzeugen. Nur öffentlich geteilte Listen sind auslesbar.
 
-### 2. Backend konfigurieren
+### 2. Listennamen eintragen
 
-`tools/backend/lists.config.json`:
+`tools/backend/lists.config.json` enthält nur die Namen — die Share-Links kommen aus einem Secret, damit sie nicht im Repository stehen:
 
 ```json
 {
   "pageSize": 25,
   "nameMaxLength": 20,
   "lists": [
-    { "name": "Cafes", "url": "https://maps.app.goo.gl/…" },
-    { "name": "Aussichtspunkte", "url": "https://maps.app.goo.gl/…" }
+    { "name": "Cafes" },
+    { "name": "Aussichtspunkte" }
   ]
 }
 ```
 
-`name` ist frei wählbar und erscheint so in der Auswahl am Gerät.
+`name` ist frei wählbar, muss exakt zum Schlüssel im Secret passen und erscheint so in der Auswahl am Gerät. Für lokale Läufe darf ersatzweise ein `"url"`-Feld daneben stehen.
 
-### 3. GitHub einrichten
+### 3. Zwei Repository-Secrets anlegen
 
-- Repository-Secret **`LIST_SALT`** setzen (beliebige zufällige Zeichenkette).
-- *Settings → Pages* → **Deploy from a branch**, Branch `main`, Ordner `/docs`.
-- Workflow einmal von Hand starten (*Actions → sync-lists → Run workflow*).
+*Settings → Secrets and variables → Actions → New repository secret*
 
-Danach steht der Katalog unter `https://<user>.github.io/<repo>/index.json`.
+| Secret | Inhalt |
+|---|---|
+| `LIST_SALT` | Eine beliebige zufällige Zeichenkette, **die nie wieder geändert wird** |
+| `LIST_URLS` | `{"Cafes":"https://maps.app.goo.gl/…","Aussichtspunkte":"https://maps.app.goo.gl/…"}` |
 
-> **Zur Vertraulichkeit:** GitHub Pages ist öffentlich. Die Listen-Ids sind mit `LIST_SALT` gehasht, damit die Datei-URLs nicht zu erraten sind — das ist Verschleierung, keine Sicherheit. Wer die URL kennt, sieht die Orte. Für wirklich private Orte gehört der Dienst hinter eine Authentifizierung.
+`LIST_SALT` geht in jede Listen-Id ein. Ändert es sich, heißen alle Listen anders, der vorher veröffentlichte Katalog wird nicht mehr wiedergefunden, und die Auswahl am Gerät zeigt ins Leere. `build.mjs` bricht deshalb ab, wenn das Secret fehlt, statt stillschweigend neue Ids zu vergeben.
 
-### 4. App einrichten
+### 4. Pages einschalten
+
+*Settings → Pages* → **Deploy from a branch**, Branch `main`, Ordner `/docs`.
+
+> **Pages gibt es im kostenlosen Tarif nur für öffentliche Repositories.** Ist das Repository privat, braucht es GitHub Pro — oder man schaltet es öffentlich. Weil die Share-Links im Secret liegen und nicht in der Konfiguration, gibt ein öffentliches Repository den Zugang zu den Google-Listen nicht preis.
+
+### 5. Workflow starten
+
+*Actions → sync-lists → Run workflow*. Danach steht der Katalog unter `https://<user>.github.io/<repo>/index.json`.
+
+> **Zur Vertraulichkeit:** Die veröffentlichten JSON-Dateien sind öffentlich lesbar. Die Listen-Ids sind mit `LIST_SALT` gehasht, damit die URLs nicht zu erraten sind — das ist Verschleierung, keine Sicherheit. Wer die URL kennt, sieht die Orte. Für wirklich vertrauliche Orte gehört der Dienst hinter eine Authentifizierung.
+
+### 6. App einrichten
 
 Basis-URL in den App-Einstellungen eintragen (Garmin Connect oder Express), dann am Gerät *Menü → Listen wählen*. Beim ersten Aufruf ohne Katalog holt die App ihn zuerst; danach steht die Auswahl bereit.
 
@@ -206,9 +219,9 @@ Backend:
 cd tools/backend
 npm install
 npx playwright install chromium
-npm test                       # 12 Tests, kein Browser noetig
-LIST_SALT=… node scrape.mjs    # schreibt .cache/raw.json
-LIST_SALT=… node build.mjs     # schreibt docs/
+npm test                       # 14 Tests, kein Browser noetig
+LIST_URLS='{"Cafes":"https://…"}' node scrape.mjs   # schreibt .cache/raw.json
+LIST_SALT=… node build.mjs                          # schreibt docs/
 ```
 
 Launcher-Icons neu erzeugen: `pwsh tools/make_icon.ps1` (schreibt PNG und `drawables.xml` je Gerätegröße: 35 / 40 / 56 / 68 px).
@@ -253,8 +266,9 @@ Eigene Codes bleiben unter 100. Alles ab 100 ist ein wörtlicher HTTP-Status, al
   2. Zweiter Lauf ohne Änderung: nur `index.json` — beide Listen per Hash übersprungen.
   3. **Ein Ort aus der Quelle entfernt:** nur `index.json` und die geänderte Seite geholt, der Wegpunkt vom Gerät verschwunden, die übrigen sieben unangetastet. Das ist die Kernzusage, und sie hält.
 - Die Veröffentlichungssperre im Backend: eine von 30 auf 5 geschrumpfte Liste wurde abgelehnt, der alte Stand blieb stehen, der Lauf endete mit Exit-Code 1.
+- Totalausfall des Scrapers bei bereits veröffentlichtem Stand: der Katalog blieb unverändert erhalten, Exit-Code 1 — das Gerät sieht unveränderte Hashes und rührt nichts an.
 - Build für alle sechs Zielgeräte plus `.iq`-Store-Paket.
-- 12 Node-Tests für Normalisierung, Paging, Hashing und die Sperre.
+- 14 Node-Tests für Normalisierung, Paging, Hashing, Secret-Auswertung und die Sperre.
 
 Der Simulator nimmt nur **neun** App-Wegpunkte an; die End-to-End-Läufe liefen deshalb mit acht Orten. Größere Mengen sind im Simulator nicht prüfbar — genau diese Grenze hat aber den `saveWaypoint()`-Fehlschluss oben zutage gefördert.
 

@@ -41,6 +41,35 @@ export function coordsFromHref(href) {
   return null;
 }
 
+/**
+ * Share-Links aus der Umgebung, als JSON `{"Listenname": "https://..."}`.
+ *
+ * Braucht man, sobald das Repository oeffentlich ist: die Links selbst oeffnen
+ * die Google-Listen und gehoeren dann nicht in eine eingecheckte Datei,
+ * sondern in ein Secret. Fehlt die Variable, gilt die url aus der Konfiguration.
+ */
+export function parseUrlOverrides(raw) {
+  if (raw == null || String(raw).trim().length === 0) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const [name, url] of Object.entries(parsed)) {
+      if (typeof url === 'string' && url.length > 0) out[name] = url;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Ist das ueberhaupt ein benutzbarer Link, oder noch der Platzhalter? */
+export function usableUrl(url) {
+  const value = String(url ?? '');
+  if (!value.startsWith('http')) return false;
+  return !value.includes('REPLACE_ME');
+}
+
 /** Rohe Treffer aus dem DOM -> {name, lat, lon}, ohne die unbrauchbaren. */
 export function toPlaces(hits) {
   const places = [];
@@ -138,11 +167,19 @@ export async function scrapeList(url, { locale = 'de-DE', timeout = 60000, headl
 
 async function main() {
   const config = JSON.parse(await readFile(CONFIG, 'utf8'));
+  const overrides = parseUrlOverrides(process.env.LIST_URLS);
   const lists = {};
 
   for (const list of config.lists ?? []) {
+    const url = overrides[list.name] ?? list.url;
+    if (!usableUrl(url)) {
+      const hint = `Kein Share-Link fuer "${list.name}" - weder in lists.config.json noch im Secret LIST_URLS`;
+      lists[list.name] = { ok: false, error: hint };
+      console.error(hint);
+      continue;
+    }
     try {
-      const places = await scrapeList(list.url);
+      const places = await scrapeList(url);
       lists[list.name] = { ok: true, places };
       console.log(`${list.name}: ${places.length} Orte`);
     } catch (error) {

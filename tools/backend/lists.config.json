@@ -2,7 +2,6 @@
   "pageSize": 25,
   "nameMaxLength": 20,
   "lists": [
-    { "name": "Cafes" },
-    { "name": "Aussichtspunkte" }
+    { "name": "Garmin" }
   ]
 }

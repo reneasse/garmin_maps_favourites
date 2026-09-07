@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<strings>
+    <string id="AppName">Maps Favourites</string>
+
+    <!-- Hauptbildschirm -->
+    <string id="LblNever">nie</string>
+    <string id="LblAge">vor $1$</string>
+    <string id="LblNow">gerade eben</string>
+    <string id="LblLists">$1$ Listen</string>
+    <string id="LblFavourites">$1$ Favoriten</string>
+    <string id="LblHintMenu">Menü für Optionen</string>
+
+    <!-- Status -->
+    <string id="StatIdle">Bereit</string>
+    <string id="StatSyncing">Synchronisiere $1$/$2$</string>
+    <string id="StatDone">Aktuell</string>
+    <string id="StatPartial">Teilweise übertragen</string>
+    <string id="StatNoUrl">Keine Dienst-URL gesetzt</string>
+    <string id="StatNoConn">Keine Telefonverbindung</string>
+    <string id="StatHttp">Serverfehler $1$</string>
+    <string id="StatBadData">Daten unlesbar</string>
+    <string id="StatEmpty">Leere Liste ignoriert</string>
+    <string id="StatTooMany">Zu viele Orte: $1$/$2$</string>
+    <string id="StatBulkBlocked">Viele Löschungen - Prüfung nötig</string>
+    <string id="StatNoLists">Keine Listen gewählt</string>
+
+    <!-- Menü -->
+    <string id="MnuTitle">Maps Favourites</string>
+    <string id="MnuSyncNow">Jetzt synchronisieren</string>
+    <string id="MnuLists">Listen wählen</string>
+    <string id="MnuStatus">Status</string>
+    <string id="MnuRemoveAll">Alle entfernen</string>
+    <string id="MnuInfo">Info</string>
+    <string id="MnuListsTitle">Listen</string>
+    <string id="MnuPlaces">$1$ Orte</string>
+
+    <!-- Bestätigungen -->
+    <string id="CfmRemoveAll">Alle synchronisierten Favoriten entfernen?</string>
+    <string id="CfmBulkDelete">$1$ Favoriten löschen?</string>
+
+    <!-- Einstellungen -->
+    <string id="SetUrl">Dienst-URL</string>
+    <string id="SetUrlPrompt">Basis-URL deiner veröffentlichten Listendaten, z. B. https://user.github.io/garmin_maps_favourites/</string>
+    <string id="SetAuto">Automatischer Sync</string>
+    <string id="SetAutoPrompt">Im Hintergrund synchronisieren. Überfällige Läufe starten kurz nach dem Einschalten des Geräts.</string>
+    <string id="SetInterval">Sync-Intervall (Min)</string>
+    <string id="SetIntervalPrompt">Wie oft der Hintergrunddienst nach Änderungen sieht. Garmin erzwingt mindestens fünf Minuten.</string>
+    <string id="SetMax">Favoriten-Obergrenze</string>
+    <string id="SetMaxPrompt">Sync verweigern, wenn die gewählten Listen mehr Orte enthalten. Edge-Geräte fassen etwa 200.</string>
+    <string id="SetBulk">Massenlöschung erlauben</string>
+    <string id="SetBulkPrompt">Ohne dies werden ungewöhnlich große Löschungen blockiert - meist bedeuten sie eine kaputte Datenquelle.</string>
+</strings>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<properties>
+    <property id="serviceUrl" type="string"></property>
+    <property id="autoSync" type="boolean">true</property>
+    <property id="syncIntervalMin" type="number">60</property>
+    <property id="maxFavourites" type="number">150</property>
+    <property id="allowBulkDelete" type="boolean">false</property>
+</properties>

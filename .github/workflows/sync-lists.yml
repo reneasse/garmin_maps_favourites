@@ -1,0 +1,76 @@
+name: sync-lists
+
+# Holt die Google-Maps-Listen und veroeffentlicht sie als JSON unter docs/.
+# GitHub Pages muss dafuer auf "Deploy from a branch", Branch main, Ordner
+# /docs stehen.
+#
+# Der Job schlaegt fehl, wenn eine Liste nicht abrufbar war oder die Sperre in
+# build.mjs angesprungen ist. Der alte Stand bleibt dann veroeffentlicht - das
+# ist Absicht: eine leere Liste wuerde die Favoriten auf dem Geraet loeschen.
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-lists
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Abhaengigkeiten
+        working-directory: tools/backend
+        run: npm install --no-audit --no-fund
+
+      - name: Chromium
+        working-directory: tools/backend
+        run: npx playwright install --with-deps chromium
+
+      - name: Tests
+        working-directory: tools/backend
+        run: npm test
+
+      # Ein Fehlschlag einzelner Listen darf den Lauf nicht hier beenden -
+      # build.mjs braucht die Ergebnisse der uebrigen und entscheidet danach.
+      - name: Listen auslesen
+        working-directory: tools/backend
+        continue-on-error: true
+        run: node scrape.mjs
+
+      - name: JSON erzeugen
+        id: build
+        working-directory: tools/backend
+        continue-on-error: true
+        env:
+          LIST_SALT: ${{ secrets.LIST_SALT }}
+        run: node build.mjs
+
+      - name: Veroeffentlichen
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs
+          if git diff --cached --quiet; then
+            echo "keine Aenderung"
+          else
+            git commit -m "Listen aktualisiert"
+            git push
+          fi
+
+      - name: Ergebnis durchreichen
+        if: steps.build.outcome != 'success'
+        run: |
+          echo "::error::Mindestens eine Liste wurde nicht veroeffentlicht - siehe Schritt 'JSON erzeugen'."
+          exit 1

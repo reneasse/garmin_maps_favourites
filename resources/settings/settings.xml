@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings>
+    <setting propertyKey="@Properties.serviceUrl" title="@Strings.SetUrl" prompt="@Strings.SetUrlPrompt">
+        <settingConfig type="alphaNumeric" maxLength="240"/>
+    </setting>
+    <setting propertyKey="@Properties.autoSync" title="@Strings.SetAuto" prompt="@Strings.SetAutoPrompt">
+        <settingConfig type="boolean"/>
+    </setting>
+    <setting propertyKey="@Properties.syncIntervalMin" title="@Strings.SetInterval" prompt="@Strings.SetIntervalPrompt">
+        <settingConfig type="numeric" min="5" max="720"/>
+    </setting>
+    <setting propertyKey="@Properties.maxFavourites" title="@Strings.SetMax" prompt="@Strings.SetMaxPrompt">
+        <settingConfig type="numeric" min="1" max="200"/>
+    </setting>
+    <setting propertyKey="@Properties.allowBulkDelete" title="@Strings.SetBulk" prompt="@Strings.SetBulkPrompt">
+        <settingConfig type="boolean"/>
+    </setting>
+</settings>

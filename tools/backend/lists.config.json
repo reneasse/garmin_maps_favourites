@@ -1,0 +1,14 @@
+{
+  "pageSize": 25,
+  "nameMaxLength": 20,
+  "lists": [
+    {
+      "name": "Cafes",
+      "url": "https://maps.app.goo.gl/REPLACE_ME"
+    },
+    {
+      "name": "Aussichtspunkte",
+      "url": "https://maps.app.goo.gl/REPLACE_ME_TOO"
+    }
+  ]
+}

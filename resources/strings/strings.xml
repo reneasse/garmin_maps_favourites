@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<strings>
+    <string id="AppName">Maps Favourites</string>
+
+    <!-- Main screen -->
+    <string id="LblNever">never</string>
+    <string id="LblAge">$1$ ago</string>
+    <string id="LblNow">just now</string>
+    <string id="LblLists">$1$ lists</string>
+    <string id="LblFavourites">$1$ favourites</string>
+    <string id="LblHintMenu">Menu for options</string>
+
+    <!-- Status -->
+    <string id="StatIdle">Ready</string>
+    <string id="StatSyncing">Syncing $1$/$2$</string>
+    <string id="StatDone">Up to date</string>
+    <string id="StatPartial">Partly synced</string>
+    <string id="StatNoUrl">No service URL set</string>
+    <string id="StatNoConn">No phone connection</string>
+    <string id="StatHttp">Server error $1$</string>
+    <string id="StatBadData">Unreadable data</string>
+    <string id="StatEmpty">Empty list ignored</string>
+    <string id="StatTooMany">Too many places: $1$/$2$</string>
+    <string id="StatBulkBlocked">Many deletions - check needed</string>
+    <string id="StatNoLists">No lists selected</string>
+
+    <!-- Menu -->
+    <string id="MnuTitle">Maps Favourites</string>
+    <string id="MnuSyncNow">Sync now</string>
+    <string id="MnuLists">Choose lists</string>
+    <string id="MnuStatus">Status</string>
+    <string id="MnuRemoveAll">Remove all</string>
+    <string id="MnuInfo">Info</string>
+    <string id="MnuListsTitle">Lists</string>
+    <string id="MnuPlaces">$1$ places</string>
+
+    <!-- Confirmations -->
+    <string id="CfmRemoveAll">Remove all synced favourites?</string>
+    <string id="CfmBulkDelete">Delete $1$ favourites?</string>
+
+    <!-- Settings -->
+    <string id="SetUrl">Service URL</string>
+    <string id="SetUrlPrompt">Base URL of your published list data, e.g. https://user.github.io/garmin_maps_favourites/</string>
+    <string id="SetAuto">Automatic sync</string>
+    <string id="SetAutoPrompt">Sync in the background. Overdue runs start shortly after the device is switched on.</string>
+    <string id="SetInterval">Sync interval (min)</string>
+    <string id="SetIntervalPrompt">How often the background service checks for changes. Garmin enforces a five minute floor.</string>
+    <string id="SetMax">Favourite limit</string>
+    <string id="SetMaxPrompt">Refuse to sync when the selected lists hold more places than this. Edge devices store about 200.</string>
+    <string id="SetBulk">Allow bulk deletion</string>
+    <string id="SetBulkPrompt">Without this, unusually large deletions are blocked - they usually mean the data source is broken.</string>
+</strings>

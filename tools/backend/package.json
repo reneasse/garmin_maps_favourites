@@ -1,0 +1,16 @@
+{
+  "name": "garmin-maps-favourites-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Scrapes public Google Maps lists and publishes them as compact JSON for the Edge app.",
+  "scripts": {
+    "scrape": "node scrape.mjs",
+    "build": "node build.mjs",
+    "sync": "node scrape.mjs && node build.mjs",
+    "test": "node --test test/build.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

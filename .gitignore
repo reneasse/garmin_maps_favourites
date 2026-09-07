@@ -1,0 +1,11 @@
+bin/
+gen/
+mir/
+internal-mir/
+external-mir/
+*.prg
+*.iq
+*.debug.xml
+*-settings.json
+node_modules/
+tools/backend/.cache/

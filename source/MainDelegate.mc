@@ -38,6 +38,8 @@ class MainDelegate extends WatchUi.BehaviorDelegate {
             Rez.Strings.MnuLists, null, :lists, null));
         menu.addItem(new WatchUi.MenuItem(
             Rez.Strings.MnuRemoveAll, null, :removeAll, null));
+        menu.addItem(new WatchUi.MenuItem(
+            Rez.Strings.MnuDiag, null, :diag, null));
         WatchUi.pushView(menu, new MainMenuDelegate(_view), WatchUi.SLIDE_UP);
     }
 }

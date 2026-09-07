@@ -34,6 +34,15 @@
     <string id="MnuListsTitle">Lists</string>
     <string id="MnuPlaces">$1$ places</string>
 
+    <!-- Diagnostics -->
+    <string id="MnuDiag">Diagnostics</string>
+    <string id="DiagApp">Waypoints of this app</string>
+    <string id="DiagAll">Waypoints on the device</string>
+    <string id="DiagStored">Remembered names</string>
+    <string id="DiagDevice">Device</string>
+    <string id="DiagOwn">this app</string>
+    <string id="DiagForeign">device</string>
+
     <!-- Confirmations -->
     <string id="CfmRemoveAll">Remove all synced favourites?</string>
     <string id="CfmBulkDelete">Delete $1$ favourites?</string>

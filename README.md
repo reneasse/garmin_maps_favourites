@@ -242,6 +242,7 @@ Launcher-Icons neu erzeugen: `pwsh tools/make_icon.ps1` (schreibt PNG und `drawa
 | [source/MainView.mc](source/MainView.mc) | Statusbildschirm |
 | [source/MainDelegate.mc](source/MainDelegate.mc) | Eingaben auf dem Statusbildschirm |
 | [source/MainMenuDelegate.mc](source/MainMenuDelegate.mc) | Hauptmenü |
+| [source/Diagnostics.mc](source/Diagnostics.mc) | Wegpunktbestand des Geräts, App-eigen und fremd, nebeneinander |
 | [source/ListPickerDelegate.mc](source/ListPickerDelegate.mc) | Listenauswahl am Gerät |
 | [source/StatusText.mc](source/StatusText.mc) | Zustandscodes → Anzeigetext |
 | [source/Util.mc](source/Util.mc) | Mengenvergleich, Koordinatenprüfung, Zeitformat |

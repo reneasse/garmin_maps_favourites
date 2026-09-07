@@ -19,6 +19,9 @@ class MainMenuDelegate extends WatchUi.Menu2InputDelegate {
             selectLists();
         } else if (id == :removeAll) {
             selectRemoveAll();
+        } else if (id == :diag) {
+            WatchUi.pushView(
+                Diagnostics.menu(), new DiagnosticsDelegate(), WatchUi.SLIDE_LEFT);
         }
     }
 

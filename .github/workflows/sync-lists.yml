@@ -59,9 +59,31 @@ jobs:
           LIST_SALT: ${{ secrets.LIST_SALT }}
         run: node build.mjs
 
+      # Damit auf einen Blick sichtbar ist, was tatsaechlich rausging - ein
+      # leeres "l" bedeutet, dass keine Liste durchkam.
+      - name: Zusammenfassung
+        if: always()
+        run: |
+          {
+            echo "### Veroeffentlichter Katalog"
+            echo ""
+            if [ -f docs/index.json ]; then
+              echo '```json'
+              cat docs/index.json
+              echo '```'
+            else
+              echo "docs/index.json wurde nicht erzeugt."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # docs/ fehlt, wenn schon der Abruf gescheitert ist - dann gibt es hier
       # nichts zu tun, und "git add docs" wuerde nur mit einem Pfadfehler
       # abbrechen und den echten Grund verdecken.
+      #
+      # Der Push kann abgelehnt werden, wenn main sich seit dem Checkout bewegt
+      # hat - waehrend eines Laufs gepusht, oder ein zweiter Lauf war schneller.
+      # Der Commit betrifft nur docs/, also wird er auf den neuen Stand
+      # umgehaengt und der Push wiederholt, statt den Lauf scheitern zu lassen.
       - name: Veroeffentlichen
         run: |
           if [ ! -d docs ]; then
@@ -73,13 +95,22 @@ jobs:
           git add docs
           if git diff --cached --quiet; then
             echo "keine Aenderung"
-          else
-            git commit -m "Listen aktualisiert"
+            exit 0
+          fi
+          git commit -m "Listen aktualisiert"
+          for versuch in 1 2 3; do
             # Explizites Ziel: der Checkout der Action haengt je nach Ausloeser
             # an einer losen HEAD-Referenz, dann wuesste ein blankes "git push"
             # nicht, wohin.
-            git push origin HEAD:main
-          fi
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "Push abgelehnt, hole neuen Stand (Versuch $versuch)"
+            git fetch origin main
+            git rebase origin/main || { git rebase --abort; exit 1; }
+          done
+          echo "Push nach drei Versuchen nicht durchgekommen"
+          exit 1
 
       - name: Ergebnis durchreichen
         if: steps.build.outcome != 'success'

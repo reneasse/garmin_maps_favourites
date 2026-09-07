@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   normaliseName, normalise, roundCoord, validCoord,
-  hashEntries, listId, paginate, guard, findPrevious
+  hashEntries, listId, paginate, guard, findPrevious, catalogChanged,
+  SCHEMA_VERSION
 } from '../build.mjs';
 import { coordsFromHref, toPlaces, parseUrlOverrides, usableUrl } from '../scrape.mjs';
 
@@ -97,6 +98,26 @@ test('findPrevious sucht im alten Katalog', () => {
   assert.equal(findPrevious(index, 'aa').h, 'h1');
   assert.equal(findPrevious(index, 'zz'), null);
   assert.equal(findPrevious(null, 'aa'), null);
+});
+
+test('ein gleicher Katalog gilt nicht als Aenderung', () => {
+  const list = { i: 'aa', n: 'Cafes', c: 3, h: 'h1', p: 1 };
+  const previous = { v: SCHEMA_VERSION, t: 1757260800, l: [list] };
+
+  // Nur der Zeitstempel unterscheidet sich - das ist keine Aenderung.
+  assert.equal(catalogChanged(previous, [{ ...list }]), false);
+  assert.equal(catalogChanged({ ...previous, t: 1 }, [{ ...list }]), false);
+
+  assert.equal(catalogChanged(previous, [{ ...list, h: 'h2' }]), true);
+  assert.equal(catalogChanged(previous, [{ ...list, n: 'Baeder' }]), true);
+  assert.equal(catalogChanged(previous, []), true);
+});
+
+test('ohne brauchbaren Vorgaenger wird immer geschrieben', () => {
+  assert.equal(catalogChanged(null, []), true);
+  assert.equal(catalogChanged({}, []), true);
+  // Anderes Schema: der alte Katalog sagt nichts ueber den neuen aus.
+  assert.equal(catalogChanged({ v: SCHEMA_VERSION + 1, l: [] }, []), true);
 });
 
 test('Koordinaten kommen aus dem Ortslink, nicht aus dem Kartenmittelpunkt', () => {

@@ -21,6 +21,18 @@ const CACHE = path.join(CACHE_DIR, 'raw.json');
 
 const PLACE_LINK = 'a[href*="/maps/place/"]';
 
+// Ohne Einwilligung zeigt Google statt der Karte eine Zwischenseite. Am
+// Arbeitsplatz klickt man sie einmal weg, auf dem Runner kommt sie bei jedem
+// Lauf: frische IP, kein Profil, kein Cookie. Der Klickpfad in acceptConsent()
+// bleibt als Rueckfallebene, aber verlassen sollte man sich auf ihn nicht -
+// die Zwischenseite sieht je nach Region anders aus. Diese Cookies nehmen sie
+// vorweg. Auch das ist undokumentiert und kann brechen; dann meldet
+// scrapeList() wenigstens, auf welcher Seite es haengengeblieben ist.
+const CONSENT_COOKIES = [
+  { name: 'CONSENT', value: 'YES+', domain: '.google.com', path: '/' },
+  { name: 'SOCS', value: 'CAESHAgBEhIaAB', domain: '.google.com', path: '/' }
+];
+
 // -- reine Logik -------------------------------------------------------------
 
 /**
@@ -97,15 +109,18 @@ async function acceptConsent(page) {
   for (const selector of candidates) {
     const button = page.locator(selector).first();
     try {
-      if (await button.isVisible({ timeout: 1500 })) {
-        await button.click({ timeout: 5000 });
-        await page.waitForLoadState('domcontentloaded');
-        return;
-      }
+      // waitFor statt isVisible: isVisible fragt sofort und ohne zu warten -
+      // solange die Zwischenseite noch baut, sagt es reihum bei jedem
+      // Kandidaten "nein", und der Dialog bleibt stehen.
+      await button.waitFor({ state: 'visible', timeout: 1500 });
+      await button.click({ timeout: 5000 });
+      await page.waitForLoadState('domcontentloaded');
+      return true;
     } catch {
       // Dieser Kandidat passt nicht - der naechste vielleicht.
     }
   }
+  return false;
 }
 
 /** Scrollt das Listenpanel, bis die Anzahl der Eintraege stehen bleibt. */
@@ -139,12 +154,27 @@ export async function scrapeList(url, { locale = 'de-DE', timeout = 60000, headl
   try {
     const context = await browser.newContext({
       locale,
-      viewport: { width: 1280, height: 1600 }
+      viewport: { width: 1280, height: 1600 },
+      // Der Standard sagt "HeadlessChrome"; darauf antwortet Google gern mit
+      // einer abgespeckten Seite ohne die Ortslinks, die hier gebraucht
+      // werden. Die Version kommt aus dem Browser selbst, damit sie mitwaechst.
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+        + `(KHTML, like Gecko) Chrome/${browser.version()} Safari/537.36`
     });
+    await context.addCookies(CONSENT_COOKIES);
     const page = await context.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
     await acceptConsent(page);
-    await page.waitForSelector(PLACE_LINK, { timeout });
+
+    try {
+      await page.waitForSelector(PLACE_LINK, { timeout });
+    } catch {
+      // Ein blanker Timeout sagt nur, dass nichts kam. Wo der Browser
+      // stehengeblieben ist, sagt beim naechsten Mal, woran es lag:
+      // Einwilligungsseite, Anmeldung oder tatsaechlich neues Markup.
+      throw new Error(`Keine Ortslinks nach ${timeout} ms - `
+        + `Seite steht auf "${await page.title()}" (${page.url()})`);
+    }
     await scrollFeed(page);
 
     const hits = await page.evaluate((selector) =>

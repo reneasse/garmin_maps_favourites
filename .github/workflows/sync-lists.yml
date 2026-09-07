@@ -84,6 +84,13 @@ jobs:
       # hat - waehrend eines Laufs gepusht, oder ein zweiter Lauf war schneller.
       # Der Commit betrifft nur docs/, also wird er auf den neuen Stand
       # umgehaengt und der Push wiederholt, statt den Lauf scheitern zu lassen.
+      #
+      # "-X theirs" heisst beim Rebase: der gerade erzeugte Katalog gewinnt.
+      # Ohne das bleibt der Rebase an index.json haengen, denn die Datei ist
+      # eine einzige Zeile - beide Seiten aendern sie zwangslaeufig an
+      # derselben Stelle, und ein Zeilenvergleich kann das nicht aufloesen.
+      # Dateien, die der andere Lauf angelegt und dieser nicht angefasst hat,
+      # bleiben davon unberuehrt.
       - name: Veroeffentlichen
         run: |
           if [ ! -d docs ]; then
@@ -107,13 +114,16 @@ jobs:
             fi
             echo "Push abgelehnt, hole neuen Stand (Versuch $versuch)"
             git fetch origin main
-            git rebase origin/main || { git rebase --abort; exit 1; }
+            git rebase -X theirs origin/main || { git rebase --abort; exit 1; }
           done
           echo "Push nach drei Versuchen nicht durchgekommen"
           exit 1
 
+      # always(), sonst haengt an dem if() stillschweigend ein success() und der
+      # Schritt faellt genau dann aus, wenn zusaetzlich das Veroeffentlichen
+      # gescheitert ist - also dann, wenn man den Grund am dringendsten braucht.
       - name: Ergebnis durchreichen
-        if: steps.build.outcome != 'success'
+        if: always() && steps.build.outcome != 'success'
         run: |
           echo "::error::Mindestens eine Liste wurde nicht veroeffentlicht - siehe Schritt 'JSON erzeugen'."
           exit 1

@@ -75,7 +75,10 @@ jobs:
             echo "keine Aenderung"
           else
             git commit -m "Listen aktualisiert"
-            git push
+            # Explizites Ziel: der Checkout der Action haengt je nach Ausloeser
+            # an einer losen HEAD-Referenz, dann wuesste ein blankes "git push"
+            # nicht, wohin.
+            git push origin HEAD:main
           fi
 
       - name: Ergebnis durchreichen

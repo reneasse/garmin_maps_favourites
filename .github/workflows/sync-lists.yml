@@ -9,8 +9,23 @@ name: sync-lists
 # ist Absicht: eine leere Liste wuerde die Favoriten auf dem Geraet loeschen.
 
 on:
+  # GitHub rechnet Cron in UTC und kennt keine Sommerzeit. Die Zeiten in den
+  # Kommentaren sind MEZ (UTC+1); von Ende Maerz bis Ende Oktober liegt jeder
+  # Lauf daher eine Stunde spaeter in der Ortszeit - aus 01:17 MEZ wird
+  # 02:17 MESZ.
+  #
+  # Mehrere Slots sind Absicht: ein einzelner Slot haengt daran, dass GitHub
+  # genau dieses eine schedule-Event zustellt, und die Zustellung ist
+  # ausdruecklich nicht garantiert - unter Last werden Events verworfen. Faellt
+  # einer aus, holt der naechste den Sync nach. Der Lauf ist idempotent und
+  # dauert rund eine Minute; ohne Inhaltsaenderung entsteht kein Commit.
+  #
+  # Die Minute 17 steht weiter schief zur vollen Stunde: dort ist die Last bei
+  # GitHub am hoechsten und die Wahrscheinlichkeit, verworfen zu werden,
+  # entsprechend groesser.
   schedule:
-    - cron: "17 4 * * *"
+    - cron: "17 0 * * *"        # 01:17 MEZ - nachts
+    - cron: "17 7-19/2 * * *"   # 08:17 bis 20:17 MEZ, alle zwei Stunden
   workflow_dispatch:
 
 permissions:

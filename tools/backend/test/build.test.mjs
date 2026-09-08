@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  cutToBytes, normaliseName, normalise, roundCoord, validCoord,
+  cutToBytes, foldToAscii, normaliseName, normalise, roundCoord, validCoord,
   hashEntries, listId, paginate, guard, findPrevious, catalogChanged,
   SCHEMA_VERSION
 } from '../build.mjs';
@@ -32,19 +32,38 @@ test('Namen werden gekuerzt und von Whitespace befreit', () => {
   assert.equal(normaliseName(null, 20), '');
 });
 
-test('gekuerzt wird nach Bytes, nicht nach Zeichen', () => {
-  // Der Fehler, an dem ein echter Eintrag gescheitert ist: der Ortsspeicher
-  // zaehlt Bytes, JavaScript zaehlt Zeichen. 'REWE Frédéric C' sind fuenfzehn
-  // Zeichen und siebzehn Bytes - das Geraet gab 'REWE Frédéric' zurueck, der
-  // Wegpunkt fand sich nie wieder, die Liste stand auf "teilweise uebertragen".
-  assert.equal(normaliseName('REWE Frédéric Cahon', 15), 'REWE Frédéric');
-  assert.equal(Buffer.byteLength('REWE Frédéric', 'utf8'), 15);
+test('Namen werden nach ASCII gefaltet', () => {
+  // Der Fehler, an dem ein echter Eintrag zweimal gescheitert ist: der
+  // Ortsspeicher gibt nur ASCII unveraendert zurueck. 'REWE Frédéric C' kam
+  // weder mit seinen siebzehn Bytes zurueck noch auf fuenfzehn Bytes gekuerzt
+  // - der Wegpunkt stand sichtbar auf dem Geraet, war ueber seinen Namen aber
+  // nicht mehr zu finden, und die Liste blieb auf "teilweise uebertragen".
+  assert.equal(foldToAscii('REWE Frédéric C'), 'REWE Frederic C');
+  // Deutsch wird ausgeschrieben, nicht entkleidet.
+  assert.equal(foldToAscii('Bäckerei Müller'), 'Baeckerei Mueller');
+  assert.equal(foldToAscii('Straße'), 'Strasse');
+  // Auch jenseits von Latin-1, und bei Zeichen, die NFD nicht zerlegt.
+  assert.equal(foldToAscii('Łódź'), 'Lodz');
+  // Typografie, die in Ortsnamen wirklich vorkommt.
+  assert.equal(foldToAscii('Joe’s Café – Bar'), "Joe's Cafe - Bar");
+  // Wofuer es kein ASCII gibt, faellt weg.
+  assert.equal(foldToAscii('Cafe ☀ Bar'), 'Cafe  Bar');
+  // ASCII bleibt unberuehrt.
+  assert.equal(foldToAscii('Restaurant Hane'), 'Restaurant Hane');
+});
 
-  // Nie mitten in einem Zeichen: ein halbes Akzent-e kaeme nie zurueck.
+test('gefaltet wird vor dem Kuerzen', () => {
+  // Die Reihenfolge ist der Gewinn: gefaltet zaehlt ein Akzent-e nur noch ein
+  // Byte, und das 'C' passt wieder mit hinein. Andersherum blieben zwei Bytes
+  // ungenutzt liegen. Dieselbe Rechnung macht WaypointWriter.shorten().
+  assert.equal(normaliseName('REWE Frédéric Cahon', 15), 'REWE Frederic C');
+  assert.equal(Buffer.byteLength('REWE Frederic C', 'utf8'), 15);
+
+  // cutToBytes bleibt byte-genau und schneidet nie mitten in einem Zeichen -
+  // es traegt den Rueckfall fuer alles, was ungefaltet hindurchgeht.
   assert.equal(cutToBytes('Café', 4), 'Caf');
   assert.equal(cutToBytes('Café', 5), 'Café');
-  // Was passt, bleibt unberuehrt - auch mit Akzenten.
-  assert.equal(normaliseName('Café', 15), 'Café');
+  assert.equal(normaliseName('Café', 15), 'Cafe');
 });
 
 test('Koordinaten werden gerundet und geprueft', () => {
@@ -88,12 +107,14 @@ test('eindeutige Namen bleiben innerhalb der Laengengrenze', () => {
 test('auch die Kennziffer passt ins Byte-Budget', () => {
   // Zwei Orte, die auf denselben Rumpf fallen - und der Rumpf traegt Akzente.
   // Zaehlt die Kennziffer nach Zeichen, schneidet das Geraet sie wieder ab.
+  // Eindeutig gemacht wird nach dem Falten: sonst blieben zwei Namen stehen,
+  // die auf dem Geraet doch wieder derselbe waeren.
   const entries = normalise([
     { name: 'Café Étoile Nord', lat: 48.1, lon: 11.1 },
     { name: 'Café Étoile Nordwest', lat: 48.2, lon: 11.2 }
   ], { nameMaxLength: 15 });
 
-  assert.deepEqual(entries.map((e) => e[0]), ['Café Étoile N', 'Café Étoile 2']);
+  assert.deepEqual(entries.map((e) => e[0]), ['Cafe Etoile Nor', 'Cafe Etoile N 2']);
   for (const entry of entries) assert.ok(Buffer.byteLength(entry[0], 'utf8') <= 15);
 });
 

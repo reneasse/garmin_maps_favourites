@@ -326,50 +326,106 @@ function eAcute() as String {
     return (233).toChar().toString();
 }
 
+//! Aus demselben Grund: alles Nicht-Asciische als Codepunkt.
+function chr(code as Number) as String {
+    return code.toChar().toString();
+}
+
 (:test)
-function namesAreCutByBytesNotCharacters(logger as Test.Logger) as Boolean {
-    // Der Fehler, an dem ein echter Eintrag gescheitert ist: gekuerzt wurde
-    // mit String.length(), und das zaehlt Zeichen. "REWE Frederic C" mit zwei
-    // Akzent-e sind fuenfzehn Zeichen, aber siebzehn Bytes - auf dem Geraet
-    // kam der Name nicht unveraendert zurueck, der Wegpunkt fand sich nie
-    // wieder, und die Liste stand dauerhaft auf "teilweise uebertragen".
+function namesAreFoldedToAscii(logger as Test.Logger) as Boolean {
+    // Der Fehler, an dem ein echter Eintrag zweimal gescheitert ist: das
+    // Geraet gibt nur ASCII unveraendert zurueck. "REWE Frederic C" mit zwei
+    // Akzent-e kam weder ungekuerzt (17 Bytes) noch auf fuenfzehn Bytes
+    // gekuerzt zurueck - der Wegpunkt stand da, war aber ueber seinen Namen
+    // nicht mehr zu finden, und die Liste blieb auf "teilweise uebertragen".
+    var e = eAcute();
+    Test.assertEqual(WaypointWriter.fold("REWE Fr" + e + "d" + e + "ric C"),
+        "REWE Frederic C");
+
+    // Deutsch wird ausgeschrieben, nicht entkleidet: aus dem Umlaut wird die
+    // eingebuergerte Ersatzschreibweise.
+    Test.assertEqual(WaypointWriter.fold("B" + chr(228) + "ckerei"), "Baeckerei");
+    Test.assertEqual(WaypointWriter.fold("M" + chr(252) + "ller"), "Mueller");
+    Test.assertEqual(WaypointWriter.fold("Stra" + chr(223) + "e"), "Strasse");
+    Test.assertEqual(WaypointWriter.fold(chr(214) + "l"), "Oel");
+    // Auch jenseits von Latin-1: polnisches l mit Strich, tschechisches s.
+    Test.assertEqual(WaypointWriter.fold(chr(0x141) + "od" + chr(0x17A)), "Lodz");
+
+    // Krummes Apostroph und Gedankenstrich kommen in Ortsnamen wirklich vor.
+    Test.assertEqual(WaypointWriter.fold("Joe" + chr(0x2019) + "s"), "Joe's");
+    Test.assertEqual(WaypointWriter.fold("A" + chr(0x2013) + "B"), "A-B");
+
+    // Wofuer es kein ASCII gibt, faellt weg - und hinterlaesst keine Luecke.
+    Test.assertEqual(WaypointWriter.fold("Cafe " + chr(0x2600) + " Bar"), "Cafe Bar");
+    Test.assertEqual(WaypointWriter.fold("  Rand  "), "Rand");
+
+    // ASCII bleibt ASCII, sonst waere das Falten selbst die naechste Falle.
+    Test.assertEqual(WaypointWriter.fold("Restaurant Hane"), "Restaurant Hane");
+    return true;
+}
+
+(:test)
+function namesAreFoldedBeforeTheyAreCut(logger as Test.Logger) as Boolean {
+    // Die Reihenfolge ist der Gewinn: gefaltet zaehlt ein Akzent-e nur noch
+    // ein Byte, und das "C" passt wieder mit hinein. Andersherum - erst
+    // kuerzen, dann falten - blieben zwei Bytes ungenutzt liegen.
     var e = eAcute();
     var voll = "REWE Fr" + e + "d" + e + "ric Cahon";
     Test.assertEqual(voll.length(), 19);
     Test.assertEqual(WaypointWriter.byteLength(voll), 21);
 
     var kurz = WaypointWriter.shorten(voll);
-    Test.assertEqual(kurz, "REWE Fr" + e + "d" + e + "ric");
+    Test.assertEqual(kurz, "REWE Frederic C");
     Test.assertEqual(WaypointWriter.byteLength(kurz), 15);
-    // Was passt, bleibt unberuehrt - auch wenn es Akzente traegt.
+    // Nach dem Falten zaehlen Zeichen und Bytes wieder gleich.
+    Test.assertEqual(kurz.length(), WaypointWriter.byteLength(kurz));
+    // Was passt, bleibt unberuehrt.
     Test.assertEqual(WaypointWriter.shorten(kurz), kurz);
 
-    // Nie mitten in einem Zeichen: ein halbes Akzent-e kaeme nie zurueck.
+    // Kein Leerzeichen am Ende: ob das Geraet eines unangetastet zurueckgibt,
+    // hat nie jemand nachgemessen - und der Abgleich haengt daran.
+    Test.assertEqual(WaypointWriter.shorten("Restaurant Zum Alten"), "Restaurant Zum");
+
+    // cut() bleibt trotzdem byte-genau: es traegt den Rueckfall fuer Namen,
+    // aus denen das Falten nichts Lesbares uebrig laesst.
     var cafe = "Caf" + e;
     Test.assertEqual(WaypointWriter.cut(cafe, 4), "Caf");
     Test.assertEqual(WaypointWriter.cut(cafe, 5), cafe);
-
-    // Reines ASCII rechnet unveraendert.
     Test.assertEqual(WaypointWriter.byteLength("Restaurant Hane"), 15);
     return true;
 }
 
 (:test)
 function distinctSuffixSurvivesTheByteLimit(logger as Test.Logger) as Boolean {
-    // Auch die Kennziffer muss ins Byte-Budget passen, sonst schneidet das
-    // Geraet genau sie wieder ab - und die Doppelgaenger fallen zusammen.
+    // Auch die Kennziffer muss ins Budget passen, sonst schneidet das Geraet
+    // genau sie wieder ab - und die Doppelgaenger fallen zusammen.
     var e = eAcute();
     var got = WaypointWriter.deviceNames([
-        "Caf" + e + " " + e + "toile Nord",
-        "Caf" + e + " " + e + "toile Nordwest"
+        "Caf" + e + " " + chr(201) + "toile Nord",
+        "Caf" + e + " " + chr(201) + "toile Nordwest"
     ] as Array<String>);
 
-    // Beide fallen auf denselben Rumpf: "Caf<e> <E>toile N" sind fuenfzehn
+    // Beide fallen auf denselben Rumpf: "Cafe Etoile Nor" sind fuenfzehn
     // Bytes, und danach unterscheiden sie sich erst.
-    Test.assertEqual(WaypointWriter.byteLength(got[0]), 15);
+    Test.assertEqual(got[0], "Cafe Etoile Nor");
     Test.assert(!got[1].equals(got[0]));
-    Test.assertEqual(got[1], "Caf" + e + " " + e + "toile~2");
+    Test.assertEqual(got[1], "Cafe Etoile N~2");
     Test.assertEqual(WaypointWriter.byteLength(got[1]), 15);
+    return true;
+}
+
+(:test)
+function foldedNamesGetTheirOwnDistinctSuffix(logger as Test.Logger) as Boolean {
+    // Das Falten schafft Doppelgaenger, die es vorher nicht gab: mit und ohne
+    // Akzent wird derselbe Name. Ohne Kennziffer bliebe der zweite Ort
+    // ungeschrieben - und beim naechsten Loeschen gingen beide zusammen weg.
+    var got = WaypointWriter.deviceNames([
+        "Caf" + eAcute() + " Central",
+        "Cafe Central"
+    ] as Array<String>);
+
+    Test.assertEqual(got[0], "Cafe Central");
+    Test.assertEqual(got[1], "Cafe Central~2");
     return true;
 }
 
@@ -384,10 +440,12 @@ function namesStayApartAfterCutting(logger as Test.Logger) as Boolean {
     ] as Array<String>);
 
     Test.assertEqual(got.size(), 3);
-    // Der Schnitt faellt mitten in den Namen, das Leerzeichen am Ende bleibt
-    // stehen - das Geraet gibt es genauso zurueck, also darf es nicht weg.
-    Test.assertEqual(got[0], "Restaurant Zum ");
-    Test.assert(!got[1].equals(got[0]));
+    // Der Schnitt faellt mitten in den Namen. Das Leerzeichen am Ende faellt
+    // weg: ob das Geraet eines unangetastet zurueckgibt, weiss niemand, und
+    // ein Name, der anders zurueckkommt, als er hineinging, ist genau der
+    // Fehler, den diese Tests einkreisen.
+    Test.assertEqual(got[0], "Restaurant Zum");
+    Test.assertEqual(got[1], "Restaurant Zu~2");
     Test.assert(WaypointWriter.byteLength(got[1]) <= WaypointWriter.NAME_LIMIT);
     Test.assertEqual(got[2], "Baecker");
     return true;
@@ -442,24 +500,26 @@ function waypointsRoundTripThroughTheDevice(logger as Test.Logger) as Boolean {
 }
 
 (:test)
-function accentedNamesSurviveTheDevice(logger as Test.Logger) as Boolean {
-    // Die Zusicherung, an der alles haengt, mit Akzenten: was shorten()
-    // liefert, kommt unveraendert zurueck - sonst findet der namensbasierte
-    // Abgleich den Wegpunkt nie wieder.
+function foldedNamesSurviveTheDevice(logger as Test.Logger) as Boolean {
+    // Die Zusicherung, an der alles haengt, an einem Namen mit Akzenten: was
+    // shorten() liefert, kommt unveraendert zurueck - sonst findet der
+    // namensbasierte Abgleich den Wegpunkt nie wieder.
     //
     // Den urspruenglichen Fehler kann dieser Test nicht nachstellen: der
-    // Simulator schneidet bei fuenfzehn Zeichen, nicht bei fuenfzehn Bytes,
-    // und nimmt "REWE Frederic C" mit seinen siebzehn Bytes unveraendert an.
-    // Genau deshalb ist der Fehler hier nie aufgefallen. Was bleibt, ist die
-    // Richtung: fuenfzehn Bytes sind nie mehr als fuenfzehn Zeichen, also
-    // haelt dieser Weg unter beiden Regeln.
+    // Simulator nimmt auch Akzente unveraendert an und schneidet erst bei
+    // fuenfzehn Zeichen. Genau deshalb ist er hier nie aufgefallen. Was
+    // bleibt, ist die Richtung: was shorten() liefert, ist reines ASCII und
+    // hoechstens fuenfzehn Bytes lang - und beides haelt unter jeder der
+    // beiden Regeln.
     Test.assert(WaypointWriter.available());
     WaypointWriter.removeAll();
     Test.assertEqual(WaypointWriter.presentNames().size(), 0);
 
     var e = eAcute();
     var wanted = WaypointWriter.shorten("REWE Fr" + e + "d" + e + "ric Cahon");
+    Test.assertEqual(wanted, "REWE Frederic C");
     Test.assertEqual(WaypointWriter.byteLength(wanted), WaypointWriter.NAME_LIMIT);
+    Test.assertEqual(wanted.length(), WaypointWriter.byteLength(wanted));
     Test.assert(WaypointWriter.add(wanted, 50.73244, 7.07526));
 
     var present = WaypointWriter.presentNames();

@@ -168,18 +168,23 @@ Der Zustand liegt in `Application.Storage`, **ein Key je Liste** (`w<id>`) mit H
 
 Vier Entscheidungen, die man dem Code sonst nicht ansieht:
 
-**Verglichen wird über Gerätenamen, nicht über die aus der Google-Liste.** Der Ortsspeicher schneidet bei **15** ab; bis dahin kommt jeder Name unverändert zurück, samt Umlauten, Akzenten und Leerzeichen am Ende. Geschrieben wird deshalb schon der gekürzte Name (`WaypointWriter.shorten()`), und Soll wie Ist stehen von der Differenzbildung an in dieser Form. Fallen zwei Orte auf denselben Rumpf, bekommt der zweite eine Kennziffer (`~2`) — für den namensbasierten Abgleich wären sie sonst derselbe Wegpunkt.
+**Verglichen wird über Gerätenamen, nicht über die aus der Google-Liste.** Der Ortsspeicher gibt einen geschriebenen Namen nur unter zwei Bedingungen unverändert zurück: höchstens **15 Bytes** lang und **reines ASCII**. Geschrieben wird deshalb schon der gefaltete, gekürzte Name (`WaypointWriter.shorten()`), und Soll wie Ist stehen von der Differenzbildung an in dieser Form. Fallen zwei Orte auf denselben Rumpf, bekommt der zweite eine Kennziffer (`~2`) — für den namensbasierten Abgleich wären sie sonst derselbe Wegpunkt.
 
-Wird das versäumt, bricht die App auf eine Art zusammen, die man ihr nicht ansieht: der volle Name geht hinein, der gekürzte kommt zurück, **kein einziger** Wegpunkt findet sich wieder, die Liste gilt als unvollständig, es wird nichts gemerkt — und die Aufräumrunde hält den gerade geschriebenen Bestand für verwaist und löscht ihn. Sichtbar wird das als `Teilweise übertragen · 0 Favoriten` bei leerer Gerätenavigation.
+Wird das versäumt, bricht die App auf eine Art zusammen, die man ihr nicht ansieht: der volle Name geht hinein, ein anderer kommt zurück, **kein einziger** Wegpunkt findet sich wieder, die Liste gilt als unvollständig, es wird nichts gemerkt — und die Aufräumrunde hält den gerade geschriebenen Bestand für verwaist und löscht ihn. Sichtbar wird das als `Teilweise übertragen` bei Favoriten, die auf dem Gerät sichtbar dastehen: geschrieben sind sie, wiederzufinden nicht.
 
-**15 was?** Simulator und Gerät sagen dazu Verschiedenes, und der Unterschied fällt nur bei Nicht-ASCII auf — dort aber hart:
+**Beide Regeln sind an derselben Zeile gescheitert**, `REWE Frédéric Cahon`, und in dieser Reihenfolge:
 
-| | Grenze | `REWE Frédéric C` (15 Zeichen, 17 Bytes) |
-|---|---|---|
-| Simulator (Edge 540, 840, 1040, 1050) | 15 **Zeichen**, nachgemessen | kommt unverändert zurück |
-| Gerät | 15 **Bytes** | kam nicht unverändert zurück |
+| Gekürzt auf | ergibt | Bytes | vom Gerät zurück |
+|---|---|---|---|
+| 15 **Zeichen** (`String.length()`) | `REWE Frédéric C` | 17 | nein |
+| 15 **Bytes** (`cut()`) | `REWE Frédéric` | 15 | nein |
+| 15 Bytes, **nach ASCII gefaltet** | `REWE Frederic C` | 15 | ja |
 
-`String.length()` zählt Zeichen, also ergab `REWE Frédéric Cahon` gekürzt genau diesen 17-Byte-Namen. Auf dem Gerät fand sich der Ort nie wieder, die Liste stand dauerhaft auf `Teilweise übertragen`, und jeder Lauf schrieb ihn erneut — die rein asciischen Namen derselben Liste liefen unbeschadet durch. Gekürzt wird deshalb auf 15 **Bytes**, über `WaypointWriter.byteLength()`/`cut()` statt `substring()` und nie mitten in einem Zeichen; dieselbe Rechnung macht das Backend mit `cutToBytes()`. Das ist die engere der beiden Regeln und erfüllt beide, denn 15 Bytes sind nie mehr als 15 Zeichen. Und es ist der Grund, warum der Fehler im Simulator nicht auffiel und dort auch nicht auffallen kann.
+Die rein asciischen Namen derselben Liste liefen jedes Mal unbeschadet durch — `Restaurant Hane`, mit seinen 15 Bytes genau an der Grenze, eingeschlossen. An der Länge lag es also beim zweiten Versuch nicht mehr; es sind die Akzente selbst. Gefaltet wird deshalb **vor** dem Kürzen (`WaypointWriter.fold()`, im Backend `foldToAscii()`): so zählt die eingebürgerte Ersatzschreibweise noch ins Budget (`ä`→`ae`, `ß`→`ss`), ein Akzent kostet danach nur noch ein Byte statt zwei, und vom Namen bleibt mehr übrig. Wofür es kein ASCII gibt, fällt weg; bleibt gar nichts übrig, geht der rohe Name hinaus — dann trifft es genau diesen einen Ort.
+
+`byteLength()`/`cut()` bleiben trotzdem byte-genau und schneiden nie mitten in ein Zeichen: sie tragen diesen Rückfall. Und Leerzeichen am Ende werden abgeschnitten — dass das Gerät sie unangetastet zurückgibt, hat nie jemand nachgemessen, und der ganze Abgleich hinge daran.
+
+**Der Simulator kann keinen der beiden Fehler zeigen.** Er ist großzügiger als das Gerät: er schneidet erst bei 15 *Zeichen* und nimmt Akzente unverändert an — `REWE Frédéric C` mit seinen 17 Bytes kommt dort unverändert zurück. Was in diesem Abschnitt steht, ist auf Hardware gemessen, nicht im Simulator.
 
 **Aufgeräumt wird nur nach einem sauberen Lauf.** Die Waisen-Suche am Ende vergleicht den Gerätebestand mit dem, was sich die App gemerkt hat. Blieb eine Liste unfertig, ist das Gemerkte kleiner als der tatsächliche Bestand — die Differenz wäre dann kein Waisenkind, sondern genau das eben Geschriebene. Liegenbleiben kostet nichts: der nächste vollständige Lauf räumt auf.
 
@@ -189,7 +194,7 @@ Wird das versäumt, bricht die App auf eine Art zusammen, die man ihr nicht ansi
 
 **Unfertig wird nicht gemerkt, sondern vergessen.** Der Hintergrundlauf wendet höchstens 20 Änderungen an. Was liegen bleibt, landet nicht als Plan im Storage — stattdessen bleibt der Hash der Liste leer, und der nächste Lauf holt sie erneut und arbeitet den Rest ab. Ein Abbruch mitten drin hinterlässt so nie einen falschen, nur einen unfertigen Zustand.
 
-**Namen sind der einzige Schlüssel.** `saveWaypoint()` gibt keine Id zurück, und `Waypoint` kennt kein `getLocation()`. Wiedergefunden wird ausschließlich über den Namen — deshalb macht das Backend die Namen eindeutig (` 2`, ` 3` …) und kürzt sie auf 15 Bytes, bevor sie das Gerät je sieht — die Kennziffer eingerechnet. Die App kürzt trotzdem noch einmal selbst: sie muss auch mit älteren, längeren Daten richtig rechnen. Taucht auf dem Gerät ein `~2` auf, waren die Daten breiter als der Ortsspeicher.
+**Namen sind der einzige Schlüssel.** `saveWaypoint()` gibt keine Id zurück, und `Waypoint` kennt kein `getLocation()`. Wiedergefunden wird ausschließlich über den Namen — deshalb faltet das Backend die Namen nach ASCII, kürzt sie auf 15 Bytes und macht sie erst dann eindeutig (` 2`, ` 3` …, die Kennziffer im Budget eingerechnet), bevor sie das Gerät je sieht. Eindeutig **nach** dem Falten: `Café` und `Cafe` sind auf dem Gerät derselbe Name. Die App rechnet trotzdem noch einmal selbst — sie muss auch mit älteren, ungefalteten Daten richtig liegen — und kommt dabei auf dasselbe Ergebnis. Taucht auf dem Gerät ein `~2` auf, waren die Daten breiter als der Ortsspeicher.
 
 ### Sicherungen
 
@@ -259,7 +264,7 @@ Launcher-Icons neu erzeugen: `pwsh tools/make_icon.ps1` (schreibt PNG und `drawa
 | [source/ListPickerDelegate.mc](source/ListPickerDelegate.mc) | Listenauswahl am Gerät |
 | [source/StatusText.mc](source/StatusText.mc) | Zustandscodes → Anzeigetext |
 | [source/Util.mc](source/Util.mc) | Mengenvergleich, Koordinatenprüfung, Zeitformat |
-| [source/Tests.mc](source/Tests.mc) | 24 Unit-Tests |
+| [source/Tests.mc](source/Tests.mc) | 32 Unit-Tests |
 | [tools/backend/scrape.mjs](tools/backend/scrape.mjs) | Playwright-Scraper |
 | [tools/backend/build.mjs](tools/backend/build.mjs) | Normalisierung, Paging, Hashing, Sperren |
 | [.github/workflows/sync-lists.yml](.github/workflows/sync-lists.yml) | Cron und Veröffentlichung |
@@ -274,8 +279,8 @@ Eigene Codes bleiben unter 100. Alles ab 100 ist ein wörtlicher HTTP-Status, al
 
 **Getestet im Simulator (Edge 1040):**
 
-- 30 Unit-Tests, davon zwei gegen die echte Geräte-API: schreiben, wiederfinden, gezielt löschen über `PersistedContent` — inklusive der Regel, dass ein von einer zweiten Liste beanspruchter Name stehen bleibt, und der Zusicherung, dass der zurückgelesene Name dem geschriebenen gleicht, auch mit Akzenten.
-- **Die Längengrenze des Ortsspeichers**, auf Edge 540, 840, 1040 und 1050 einzeln nachgemessen: 15 **Zeichen**, darüber wird wortlos abgeschnitten. Bis dahin ist der Weg durch den Speicher verlustfrei — geprüft mit Akzenten (`é`), Umlauten, `ß`, Leerzeichen am Ende und `~`. Der Simulator ist damit großzügiger als das Gerät, das bei 15 Bytes schneidet: `REWE Frédéric C` (17 Bytes) kommt hier unverändert zurück, dort nicht. Der Simulator kann diesen Fehler also nicht zeigen — geprüft wird hier nur, dass ein auf 15 Bytes gekürzter Name unverändert zurückkommt, auch mit Akzenten.
+- 32 Unit-Tests, davon zwei gegen die echte Geräte-API: schreiben, wiederfinden, gezielt löschen über `PersistedContent` — inklusive der Regel, dass ein von einer zweiten Liste beanspruchter Name stehen bleibt, und der Zusicherung, dass der zurückgelesene Name dem geschriebenen gleicht.
+- **Die Grenzen des Ortsspeichers im Simulator**, auf Edge 540, 840, 1040 und 1050 einzeln nachgemessen: 15 **Zeichen**, darüber wird wortlos abgeschnitten; bis dahin ist der Weg verlustfrei — auch mit Akzenten (`é`), Umlauten, `ß`, Leerzeichen am Ende und `~`. Das Gerät ist in beidem strenger (15 Bytes, nur ASCII), also kann der Simulator keinen der beiden Namensfehler zeigen. Geprüft wird hier deshalb nur die Richtung: dass ankommt, was `shorten()` liefert.
 - **Der komplette Weg, dreimal hintereinander gegen einen lokalen HTTP-Server:**
   1. Erster Lauf: Katalog + zwei Seiten geholt, 8 Orte als Wegpunkte geschrieben, beide Hashes gespeichert, Status *Aktuell*.
   2. Zweiter Lauf ohne Änderung: nur `index.json` — beide Listen per Hash übersprungen.
@@ -290,7 +295,7 @@ Der Simulator hält insgesamt **zehn** Orte und bringt neun eigene mit — für 
 **Nicht getestet:**
 
 - **Der Scraper gegen eine echte Google-Liste.** Er ist gegen das aktuelle Markup geschrieben, aber ungeprüft — hier ist zuerst mit Nacharbeit zu rechnen. `node scrape.mjs` meldet klar, wenn er nichts findet, und die Sperre in `build.mjs` fängt den Rest ab.
-- **Alles auf echter Hardware.** Offen: ob der Hintergrunddienst nach dem Einschalten wirklich zeitnah anläuft, ob die Längengrenze auf dem Gerät genau bei 15 Bytes liegt (der Simulator sagt 15 Zeichen, das Gerät hat einen 17-Byte-Namen abgelehnt — dazwischen liegt Spielraum, den nur die Hardware ausmisst), wie viele Wegpunkte das Gerät tatsächlich annimmt, und ob die App-eigenen Favoriten beim Deinstallieren mitgelöscht werden.
+- **Alles auf echter Hardware.** Offen: ob der Hintergrunddienst nach dem Einschalten wirklich zeitnah anläuft, wo die Längengrenze auf dem Gerät genau liegt (15 ASCII-Bytes kommen zurück, 17 Bytes mit Akzenten nicht — dazwischen liegt Spielraum, den nur die Hardware ausmisst; seit dem Falten steht kein Name mehr über 15 ASCII-Bytes an), wie viele Wegpunkte das Gerät tatsächlich annimmt, und ob die App-eigenen Favoriten beim Deinstallieren mitgelöscht werden.
 - Die anderen fünf Gerätemodelle jenseits des Builds.
 - Der Hintergrunddienst selbst — im Simulator über *Simulation → Background Events → Temporal Event* auslösbar, hier nicht durchgespielt.
 

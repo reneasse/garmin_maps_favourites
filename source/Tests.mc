@@ -319,6 +319,60 @@ function namesAreCutToWhatTheDeviceKeeps(logger as Test.Logger) as Boolean {
     return true;
 }
 
+//! Ein Akzent-e, ohne es in den Quelltext zu schreiben: der Compiler liest
+//! diese Dateien als ASCII, und ein Literal haette hier still zwei Zeichen
+//! ergeben - der Test wuerde dann etwas anderes pruefen, als er behauptet.
+function eAcute() as String {
+    return (233).toChar().toString();
+}
+
+(:test)
+function namesAreCutByBytesNotCharacters(logger as Test.Logger) as Boolean {
+    // Der Fehler, an dem ein echter Eintrag gescheitert ist: gekuerzt wurde
+    // mit String.length(), und das zaehlt Zeichen. "REWE Frederic C" mit zwei
+    // Akzent-e sind fuenfzehn Zeichen, aber siebzehn Bytes - auf dem Geraet
+    // kam der Name nicht unveraendert zurueck, der Wegpunkt fand sich nie
+    // wieder, und die Liste stand dauerhaft auf "teilweise uebertragen".
+    var e = eAcute();
+    var voll = "REWE Fr" + e + "d" + e + "ric Cahon";
+    Test.assertEqual(voll.length(), 19);
+    Test.assertEqual(WaypointWriter.byteLength(voll), 21);
+
+    var kurz = WaypointWriter.shorten(voll);
+    Test.assertEqual(kurz, "REWE Fr" + e + "d" + e + "ric");
+    Test.assertEqual(WaypointWriter.byteLength(kurz), 15);
+    // Was passt, bleibt unberuehrt - auch wenn es Akzente traegt.
+    Test.assertEqual(WaypointWriter.shorten(kurz), kurz);
+
+    // Nie mitten in einem Zeichen: ein halbes Akzent-e kaeme nie zurueck.
+    var cafe = "Caf" + e;
+    Test.assertEqual(WaypointWriter.cut(cafe, 4), "Caf");
+    Test.assertEqual(WaypointWriter.cut(cafe, 5), cafe);
+
+    // Reines ASCII rechnet unveraendert.
+    Test.assertEqual(WaypointWriter.byteLength("Restaurant Hane"), 15);
+    return true;
+}
+
+(:test)
+function distinctSuffixSurvivesTheByteLimit(logger as Test.Logger) as Boolean {
+    // Auch die Kennziffer muss ins Byte-Budget passen, sonst schneidet das
+    // Geraet genau sie wieder ab - und die Doppelgaenger fallen zusammen.
+    var e = eAcute();
+    var got = WaypointWriter.deviceNames([
+        "Caf" + e + " " + e + "toile Nord",
+        "Caf" + e + " " + e + "toile Nordwest"
+    ] as Array<String>);
+
+    // Beide fallen auf denselben Rumpf: "Caf<e> <E>toile N" sind fuenfzehn
+    // Bytes, und danach unterscheiden sie sich erst.
+    Test.assertEqual(WaypointWriter.byteLength(got[0]), 15);
+    Test.assert(!got[1].equals(got[0]));
+    Test.assertEqual(got[1], "Caf" + e + " " + e + "toile~2");
+    Test.assertEqual(WaypointWriter.byteLength(got[1]), 15);
+    return true;
+}
+
 (:test)
 function namesStayApartAfterCutting(logger as Test.Logger) as Boolean {
     // Zwei Orte mit gleichem Rumpf duerfen nicht zu einem Wegpunkt verschmelzen:
@@ -334,7 +388,7 @@ function namesStayApartAfterCutting(logger as Test.Logger) as Boolean {
     // stehen - das Geraet gibt es genauso zurueck, also darf es nicht weg.
     Test.assertEqual(got[0], "Restaurant Zum ");
     Test.assert(!got[1].equals(got[0]));
-    Test.assert(got[1].length() <= WaypointWriter.NAME_LIMIT);
+    Test.assert(WaypointWriter.byteLength(got[1]) <= WaypointWriter.NAME_LIMIT);
     Test.assertEqual(got[2], "Baecker");
     return true;
 }
@@ -381,6 +435,36 @@ function waypointsRoundTripThroughTheDevice(logger as Test.Logger) as Boolean {
     Test.assertEqual(
         WaypointWriter.removeNames([wanted] as Array<String>, [] as Array<String>), 1);
     Test.assertEqual(WaypointWriter.presentNames().size(), 0);
+
+    WaypointWriter.removeAll();
+    Test.assertEqual(WaypointWriter.presentNames().size(), 0);
+    return true;
+}
+
+(:test)
+function accentedNamesSurviveTheDevice(logger as Test.Logger) as Boolean {
+    // Die Zusicherung, an der alles haengt, mit Akzenten: was shorten()
+    // liefert, kommt unveraendert zurueck - sonst findet der namensbasierte
+    // Abgleich den Wegpunkt nie wieder.
+    //
+    // Den urspruenglichen Fehler kann dieser Test nicht nachstellen: der
+    // Simulator schneidet bei fuenfzehn Zeichen, nicht bei fuenfzehn Bytes,
+    // und nimmt "REWE Frederic C" mit seinen siebzehn Bytes unveraendert an.
+    // Genau deshalb ist der Fehler hier nie aufgefallen. Was bleibt, ist die
+    // Richtung: fuenfzehn Bytes sind nie mehr als fuenfzehn Zeichen, also
+    // haelt dieser Weg unter beiden Regeln.
+    Test.assert(WaypointWriter.available());
+    WaypointWriter.removeAll();
+    Test.assertEqual(WaypointWriter.presentNames().size(), 0);
+
+    var e = eAcute();
+    var wanted = WaypointWriter.shorten("REWE Fr" + e + "d" + e + "ric Cahon");
+    Test.assertEqual(WaypointWriter.byteLength(wanted), WaypointWriter.NAME_LIMIT);
+    Test.assert(WaypointWriter.add(wanted, 50.73244, 7.07526));
+
+    var present = WaypointWriter.presentNames();
+    Test.assertEqual(present.size(), 1);
+    Test.assertEqual(present[0], wanted);
 
     WaypointWriter.removeAll();
     Test.assertEqual(WaypointWriter.presentNames().size(), 0);

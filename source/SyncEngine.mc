@@ -291,8 +291,8 @@ class SyncEngine {
         _curPage = 0;
 
         if (_curPages == 0) {
-            // Serverseitig leere Liste: nur zulaessig, wenn hier auch nichts
-            // steht. Sonst greift dieselbe Sperre wie bei einer leeren Antwort.
+            // Serverseitig leere Liste: ohne Seiten gleich zum Anwenden. Steht
+            // hier noch etwas, faengt die Loeschsperre das dort ab.
             applyCurrentList();
             return;
         }
@@ -308,21 +308,13 @@ class SyncEngine {
         var desired = _names;
         var old = SyncStore.listNames(_curId);
 
-        // Sperre 1: eine leer gewordene Liste ist fast immer ein kaputter
-        // Scraper, kein geleerter Ordner. Im Zweifel bleibt alles stehen.
-        if (desired.size() == 0 && old.size() > 0) {
-            _error = SyncStore.STAT_EMPTY;
-            _done++;
-            beginNextList();
-            return;
-        }
-
         var reference = _havePresent ? _present : old;
         var toAdd = Util.difference(desired, reference);
         var toDel = Util.difference(old, desired);
 
-        // Sperre 2: ungewoehnlich viele Loeschungen auf einmal.
-        if (blocksBulkDelete(toDel.size(), old.size())) {
+        // Ungewoehnlich viele Loeschungen, oder die Liste ist leer geworden:
+        // erst nachfragen. Beides kann ein kaputter Scraper sein.
+        if (blocksBulkDelete(toDel.size(), old.size(), desired.size())) {
             _blocked = toDel.size();
             _error = SyncStore.STAT_BULK;
             _done++;
@@ -341,9 +333,17 @@ class SyncEngine {
         beginNextList();
     }
 
-    //! Loeschsperre: mehr als die Haelfte des Bestandes und mehr als BULK_FLOOR.
-    function blocksBulkDelete(deletions as Number, stored as Number) as Boolean {
+    //! Loeschsperre: mehr als die Haelfte des Bestandes und mehr als BULK_FLOOR -
+    //! oder alles. Eine leer gewordene Liste ist fast immer ein kaputter Scraper,
+    //! kein geleerter Ordner, und kennt deshalb keinen Sockel: auch der letzte
+    //! Favorit geht nicht ohne Rueckfrage.
+    //!
+    //! Frueher wurde eine leere Liste gar nicht angewendet, auch nicht nach
+    //! Rueckfrage. Dann liess sie sich am Geraet nur durch Abwaehlen raeumen -
+    //! und eine bewusst geleerte Google-Liste blieb dort fuer immer stehen.
+    function blocksBulkDelete(deletions as Number, stored as Number, remaining as Number) as Boolean {
         if (_bulkOk || Settings.allowBulkDelete) { return false; }
+        if (remaining == 0 && deletions > 0) { return true; }
         if (deletions <= BULK_FLOOR) { return false; }
         return deletions > stored / 2;
     }

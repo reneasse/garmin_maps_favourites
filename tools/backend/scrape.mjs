@@ -14,9 +14,10 @@
 // mitgelesen. Das ist kein schoenerer Weg, aber der einzige verbliebene.
 //
 // Das ist und bleibt undokumentiertes Terrain. Wenn Google das Format aendert,
-// findet dieses Skript nichts mehr und meldet einen Fehler. Genau dafuer gibt
-// es die Sperren in build.mjs: ein Fehlschlag veroeffentlicht nichts, statt
-// eine leere Liste auszuliefern.
+// findet dieses Skript nichts mehr. Von hier aus ist das nicht von einer
+// bewusst geleerten Liste zu unterscheiden - deshalb entscheidet nicht dieses
+// Skript, sondern die Sperre in build.mjs: eine vorher gefuellte Liste, die
+// leer zurueckkommt, wird nur mit ausdruecklichem Zugestaendnis veroeffentlicht.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -268,6 +269,15 @@ async function scrollUntilSettled(page, count, { rounds = 60, settle = 3, pause 
   return last;
 }
 
+/**
+ * -> { places, diagnosis }. `diagnosis` beschreibt die Seite, wenn keine Orte
+ * kamen, und ist sonst null.
+ *
+ * Null Orte sind hier kein Fehler mehr: eine geleerte Liste sieht genauso aus
+ * wie ein gebrochener Scraper, und nur build.mjs kennt den vorigen Stand, an
+ * dem sich das entscheiden laesst. Geworfen wird nur, wenn gar keine Liste
+ * geladen hat.
+ */
 export async function scrapeList(url, { locale = 'de-DE', timeout = 60000, headless = true } = {}) {
   const { chromium } = await import('playwright');
   // Ohne das Flag setzt Chromium navigator.webdriver, und Google liefert
@@ -318,11 +328,10 @@ export async function scrapeList(url, { locale = 'de-DE', timeout = 60000, headl
     await scrollUntilSettled(page, () => collected.length);
 
     const places = dedupe(collected);
-    if (places.length === 0) {
-      throw new Error('Keine Orte gefunden - Liste nicht oeffentlich oder Format '
-        + `geaendert. ${await describePage(page, { responses, places: 0 })}`);
-    }
-    return places;
+    const diagnosis = places.length === 0
+      ? await describePage(page, { responses, places: 0 })
+      : null;
+    return { places, diagnosis };
   } finally {
     await browser.close();
   }
@@ -344,9 +353,15 @@ async function main() {
       continue;
     }
     try {
-      const places = await scrapeList(url);
+      const { places, diagnosis } = await scrapeList(url);
       lists[list.name] = { ok: true, places };
       console.log(`${list.name}: ${places.length} Orte`);
+      if (diagnosis) {
+        // Leer ist erlaubt, aber verdaechtig - bricht der Scraper, ist das hier
+        // die einzige Stelle, an der man es sieht.
+        console.warn(`${list.name}: keine Orte - Liste leer, nicht oeffentlich `
+          + `oder Format geaendert. ${diagnosis}`);
+      }
     } catch (error) {
       // Ein Fehlschlag ist kein Abbruch: die uebrigen Listen sollen trotzdem
       // durchlaufen, und build.mjs behaelt fuer diese hier den alten Stand.

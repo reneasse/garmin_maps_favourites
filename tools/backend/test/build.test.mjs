@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   cutToBytes, foldToAscii, normaliseName, normalise, roundCoord, validCoord,
-  hashEntries, listId, paginate, guard, findPrevious, catalogChanged,
+  hashEntries, listId, paginate, guard, shrinkAllowed, findPrevious, catalogChanged,
   SCHEMA_VERSION
 } from '../build.mjs';
 import {
@@ -155,8 +155,25 @@ test('die Sperre haelt leere und geschrumpfte Listen zurueck', () => {
   assert.equal(guard(10, 5).ok, true);
   assert.equal(guard(10, 12).ok, true);
   // Erster Lauf: es gibt nichts zu verlieren.
-  assert.equal(guard(0, 0).ok, true);
   assert.equal(guard(0, 30).ok, true);
+  // Auch ein einzelner letzter Ort geht nicht still verloren.
+  assert.equal(guard(1, 0).ok, false);
+  // Einmal bewusst geleert, ist leer danach kein Fehler mehr - sonst waere
+  // jeder weitere Lauf rot, bis wieder etwas in der Liste steht.
+  assert.equal(guard(0, 0).ok, true);
+});
+
+test('nur ein ausdrueckliches true hebt die Sperre auf', () => {
+  assert.equal(shrinkAllowed('true'), true);
+  assert.equal(shrinkAllowed(' TRUE '), true);
+
+  // Der Zeitplan liefert "false", ein fehlendes Secret gar nichts.
+  assert.equal(shrinkAllowed('false'), false);
+  assert.equal(shrinkAllowed(''), false);
+  assert.equal(shrinkAllowed(undefined), false);
+  // Was nur so aussieht, zaehlt nicht.
+  assert.equal(shrinkAllowed('1'), false);
+  assert.equal(shrinkAllowed('ja'), false);
 });
 
 test('findPrevious sucht im alten Katalog', () => {

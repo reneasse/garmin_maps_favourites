@@ -7,6 +7,13 @@ name: sync-lists
 # Der Job schlaegt fehl, wenn eine Liste nicht abrufbar war oder die Sperre in
 # build.mjs angesprungen ist. Der alte Stand bleibt dann veroeffentlicht - das
 # ist Absicht: eine leere Liste wuerde die Favoriten auf dem Geraet loeschen.
+#
+# Wurde eine Liste wirklich stark verkleinert oder geleert, hebt allow_shrink
+# die Sperre fuer genau einen Lauf auf - von Hand ueber "Run workflow" oder
+# vom Handy mit {"event_type":"mobile_trigger","client_payload":{"allow_shrink":true}}.
+# Der Zeitplan kann das nie: ein kaputter Scraper faellt sonst genau dann auf
+# eine leere Liste, wenn niemand hinsieht. Auf dem Geraet fragt die App vor dem
+# Loeschen trotzdem noch einmal nach.
 
 on:
   # GitHub rechnet Cron in UTC und kennt keine Sommerzeit. Die Zeiten in den
@@ -27,6 +34,11 @@ on:
     - cron: "17 0 * * *"        # 01:17 MEZ - nachts
     - cron: "17 7-19/2 * * *"   # 08:17 bis 20:17 MEZ, alle zwei Stunden
   workflow_dispatch:
+    inputs:
+      allow_shrink:
+        description: "Stark geschrumpfte oder leere Listen veroeffentlichen (nur nach bewusstem Aufraeumen)"
+        type: boolean
+        default: false
   repository_dispatch:
     types: [mobile_trigger]
 
@@ -68,12 +80,17 @@ jobs:
           LIST_URLS: ${{ secrets.LIST_URLS }}
         run: node scrape.mjs
 
+      # inputs ist beim Zeitplan leer, client_payload gibt es nur beim Handy-
+      # Trigger - beide Seiten ergeben dort false. Der String-Vergleich steht
+      # daneben, weil ein Kurzbefehl "true" gern als Text schickt, und GitHub
+      # 'true' == true zu false auswertet.
       - name: JSON erzeugen
         id: build
         working-directory: tools/backend
         continue-on-error: true
         env:
           LIST_SALT: ${{ secrets.LIST_SALT }}
+          ALLOW_SHRINK: ${{ inputs.allow_shrink == true || github.event.client_payload.allow_shrink == true || github.event.client_payload.allow_shrink == 'true' }}
         run: node build.mjs
 
       # Damit auf einen Blick sichtbar ist, was tatsaechlich rausging - ein

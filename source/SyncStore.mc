@@ -37,8 +37,6 @@ module SyncStore {
     const STAT_NO_CONN = 4;
     const STAT_NO_LISTS = 5;
     const STAT_BAD_DATA = 6;
-    //! Wird nicht mehr gesetzt - eine leere Liste laeuft heute in STAT_BULK.
-    //! Bleibt, damit ein gespeicherter Status aus aelteren Versionen lesbar ist.
     const STAT_EMPTY = 7;
     const STAT_TOO_MANY = 8;
     const STAT_BULK = 9;

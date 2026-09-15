@@ -185,26 +185,12 @@ function bulkDeleteGuardHasFloorAndRatio(logger as Test.Logger) as Boolean {
     Settings.load();
     var engine = new SyncEngine(true, null);
 
-    // Kleine Pflege bleibt erlaubt, auch wenn sie den ganzen Bestand trifft -
-    // solange danach etwas in der Liste steht.
-    Test.assert(!engine.blocksBulkDelete(3, 4, 1));
-    Test.assert(!engine.blocksBulkDelete(5, 5, 5));
+    // Kleine Pflege bleibt erlaubt, auch wenn sie den ganzen Bestand trifft.
+    Test.assert(!engine.blocksBulkDelete(3, 4));
+    Test.assert(!engine.blocksBulkDelete(5, 5));
     // Darueber zaehlt das Verhaeltnis.
-    Test.assert(engine.blocksBulkDelete(20, 30, 10));
-    Test.assert(!engine.blocksBulkDelete(20, 60, 40));
-    return true;
-}
-
-(:test)
-function emptiedListAlwaysAsks(logger as Test.Logger) as Boolean {
-    Settings.load();
-    var engine = new SyncEngine(true, null);
-
-    // Leer geworden: kein Sockel, auch ein einzelner Favorit wird erfragt.
-    Test.assert(engine.blocksBulkDelete(1, 1, 0));
-    Test.assert(engine.blocksBulkDelete(5, 5, 0));
-    // Nichts stand da, nichts kommt: da gibt es nichts zu fragen.
-    Test.assert(!engine.blocksBulkDelete(0, 0, 0));
+    Test.assert(engine.blocksBulkDelete(20, 30));
+    Test.assert(!engine.blocksBulkDelete(20, 60));
     return true;
 }
 
@@ -212,16 +198,13 @@ function emptiedListAlwaysAsks(logger as Test.Logger) as Boolean {
 function bulkOverrideLiftsGuard(logger as Test.Logger) as Boolean {
     Settings.load();
     var engine = new SyncEngine(true, null);
-    Test.assert(engine.blocksBulkDelete(20, 30, 10));
-    Test.assert(engine.blocksBulkDelete(3, 3, 0));
+    Test.assert(engine.blocksBulkDelete(20, 30));
 
     // start() setzt das Zugestaendnis des Nutzers; ohne Dienst-URL bricht es
     // gleich wieder ab, das Flag bleibt aber gesetzt.
     Settings.serviceUrl = "";
     engine.start(true);
-    Test.assert(!engine.blocksBulkDelete(20, 30, 10));
-    // Nach der Rueckfrage darf auch eine leere Liste raeumen.
-    Test.assert(!engine.blocksBulkDelete(3, 3, 0));
+    Test.assert(!engine.blocksBulkDelete(20, 30));
     return true;
 }
 

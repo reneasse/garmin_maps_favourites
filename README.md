@@ -201,7 +201,7 @@ Die rein asciischen Namen derselben Liste liefen jedes Mal unbeschadet durch —
 Die Scraper-Kette hängt an undokumentiertem Google-HTML und wird irgendwann brechen. Sie darf dabei keine Favoriten mitnehmen:
 
 1. **Backend:** eine Liste, die leer oder auf unter die Hälfte geschrumpft zurückkommt, wird nicht veröffentlicht — der alte Stand bleibt stehen, der Workflow schlägt laut fehl. Aufheben lässt sich das nur für einen bewusst gestarteten Lauf (siehe unten), nie vom Zeitplan aus.
-2. **App:** eine leer gewordene Liste bei vorher vorhandenem Bestand wird nicht still angewendet, sondern läuft in Sicherung 3 — ohne deren Sockel, auch ein einzelner letzter Favorit wird erfragt.
+2. **App:** eine leer gewordene Liste bei vorher vorhandenem Bestand wird übersprungen, nicht angewendet.
 3. **App:** mehr als `max(5, Bestand/2)` Löschungen auf einmal werden blockiert. Der Vordergrund fragt beim nächsten *Jetzt synchronisieren* nach, der Hintergrund lässt es. Abschaltbar über `allowBulkDelete`.
 4. **App:** übersteigt die Summe der gewählten Listen `maxFavourites`, bricht der Sync **vor** der ersten Änderung ab.
 5. Abwählen einer Liste ist eine ausdrückliche Nutzeraktion und umgeht Sicherung 3.
@@ -212,7 +212,7 @@ Die Scraper-Kette hängt an undokumentiertem Google-HTML und wird irgendwann bre
 Wer in Google Maps kräftig aufräumt, läuft zwangsläufig in Sicherung 1 — der Scraper kann eine geleerte Liste nicht von einer kaputten unterscheiden. Dann:
 
 1. **Workflow einmal mit Zugeständnis starten:** *Actions → sync-lists → Run workflow* und **allow_shrink** anhaken. Vom Handy aus dasselbe über den `mobile_trigger` mit `"client_payload": {"allow_shrink": true}`. Das Log zeigt dann `trotz Sperre veroeffentlicht` samt altem und neuem Stand.
-2. **Am Edge *Jetzt synchronisieren*** — die App meldet *Viele Löschungen - Prüfung nötig*. Beim nächsten *Jetzt synchronisieren* fragt sie nach, wie viele Favoriten wegfallen; nach Bestätigung wird geräumt. Der Hintergrunddienst allein räumt nie.
+2. **Am Edge *Jetzt synchronisieren*** — eine verkleinerte Liste läuft in Sicherung 3: die App meldet *Viele Löschungen - Prüfung nötig*, fragt beim nächsten *Jetzt synchronisieren* nach, wie viele Favoriten wegfallen, und räumt nach Bestätigung. Der Hintergrunddienst allein räumt nie. Eine ganz geleerte Liste überspringt die App dagegen (Sicherung 2, *Leere Liste ignoriert*) — am Gerät verschwinden deren Favoriten nur durch Abwählen der Liste.
 
 Eine einmal geleerte Liste bleibt danach grün: leer auf leer ist keine Schrumpfung mehr. Füllt man sie wieder, geht jeder Lauf ohne Zugeständnis durch.
 

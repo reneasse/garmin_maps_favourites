@@ -12,8 +12,9 @@ name: sync-lists
 # die Sperre fuer genau einen Lauf auf - von Hand ueber "Run workflow" oder
 # vom Handy mit {"event_type":"mobile_trigger","client_payload":{"allow_shrink":true}}.
 # Der Zeitplan kann das nie: ein kaputter Scraper faellt sonst genau dann auf
-# eine leere Liste, wenn niemand hinsieht. Auf dem Geraet fragt die App vor dem
-# Loeschen trotzdem noch einmal nach.
+# eine leere Liste, wenn niemand hinsieht. Auf dem Geraet fragt die App vor
+# vielen Loeschungen trotzdem noch einmal nach; eine ganz leere Liste
+# ueberspringt sie.
 
 on:
   # GitHub rechnet Cron in UTC und kennt keine Sommerzeit. Die Zeiten in den

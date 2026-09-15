@@ -38,7 +38,7 @@ on:
       allow_shrink:
         description: "Stark geschrumpfte oder leere Listen veroeffentlichen (nur nach bewusstem Aufraeumen)"
         type: boolean
-        default: false
+        default: true
   repository_dispatch:
     types: [mobile_trigger]
 

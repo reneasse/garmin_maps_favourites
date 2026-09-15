@@ -200,7 +200,7 @@ Die rein asciischen Namen derselben Liste liefen jedes Mal unbeschadet durch —
 
 Die Scraper-Kette hängt an undokumentiertem Google-HTML und wird irgendwann brechen. Sie darf dabei keine Favoriten mitnehmen:
 
-1. **Backend:** eine Liste, die leer oder auf unter die Hälfte geschrumpft zurückkommt, wird nicht veröffentlicht — der alte Stand bleibt stehen, der Workflow schlägt laut fehl. Aufheben lässt sich das nur für einen bewusst gestarteten Lauf (siehe unten), nie vom Zeitplan aus.
+1. **Backend:** eine Liste, die leer zurückkommt, obwohl vorher etwas darin stand, wird nicht veröffentlicht — der alte Stand bleibt stehen, der Workflow schlägt laut fehl. Aufheben lässt sich das nur für einen bewusst gestarteten Lauf (siehe unten), nie vom Zeitplan aus. Eine auf unter die Hälfte geschrumpfte Liste geht dagegen ohne Zutun durch und hinterlässt nur eine Warnung am Lauf.
 2. **App:** eine leer gewordene Liste bei vorher vorhandenem Bestand wird übersprungen, nicht angewendet.
 3. **App:** mehr als `max(5, Bestand/2)` Löschungen auf einmal werden blockiert. Der Vordergrund fragt beim nächsten *Jetzt synchronisieren* nach, der Hintergrund lässt es. Abschaltbar über `allowBulkDelete`.
 4. **App:** übersteigt die Summe der gewählten Listen `maxFavourites`, bricht der Sync **vor** der ersten Änderung ab.
@@ -209,7 +209,7 @@ Die Scraper-Kette hängt an undokumentiertem Google-HTML und wird irgendwann bre
 
 #### Eine Liste bewusst verkleinern oder leeren
 
-Wer in Google Maps kräftig aufräumt, läuft zwangsläufig in Sicherung 1 — der Scraper kann eine geleerte Liste nicht von einer kaputten unterscheiden. Dann:
+Kräftiges Aufräumen in Google Maps kommt beim nächsten Lauf von selbst an; das Log zeigt dann nur `::warning::… stark geschrumpft`. Wer eine Liste ganz leert, läuft dagegen in Sicherung 1 — der Scraper kann eine geleerte Liste nicht von einer kaputten unterscheiden. Dann:
 
 1. **Workflow einmal mit Zugeständnis starten:** *Actions → sync-lists → Run workflow* und **allow_shrink** anhaken. Vom Handy aus dasselbe über den `mobile_trigger` mit `"client_payload": {"allow_shrink": true}`. Das Log zeigt dann `trotz Sperre veroeffentlicht` samt altem und neuem Stand.
 2. **Am Edge *Jetzt synchronisieren*** — eine verkleinerte Liste läuft in Sicherung 3: die App meldet *Viele Löschungen - Prüfung nötig*, fragt beim nächsten *Jetzt synchronisieren* nach, wie viele Favoriten wegfallen, und räumt nach Bestätigung. Der Hintergrunddienst allein räumt nie. Eine ganz geleerte Liste überspringt die App dagegen (Sicherung 2, *Leere Liste ignoriert*) — am Gerät verschwinden deren Favoriten nur durch Abwählen der Liste.
@@ -294,7 +294,7 @@ Eigene Codes bleiben unter 100. Alles ab 100 ist ein wörtlicher HTTP-Status, al
   1. Erster Lauf: Katalog + zwei Seiten geholt, 8 Orte als Wegpunkte geschrieben, beide Hashes gespeichert, Status *Aktuell*.
   2. Zweiter Lauf ohne Änderung: nur `index.json` — beide Listen per Hash übersprungen.
   3. **Ein Ort aus der Quelle entfernt:** nur `index.json` und die geänderte Seite geholt, der Wegpunkt vom Gerät verschwunden, die übrigen sieben unangetastet. Das ist die Kernzusage, und sie hält.
-- Die Veröffentlichungssperre im Backend: eine von 30 auf 5 geschrumpfte Liste wurde abgelehnt, der alte Stand blieb stehen, der Lauf endete mit Exit-Code 1.
+- Die Veröffentlichungssperre im Backend: eine leer gewordene Liste wurde abgelehnt, der alte Stand blieb stehen, der Lauf endete mit Exit-Code 1. Eine von 11 auf 1 geschrumpfte Liste ging im selben Lauf mit Warnung durch.
 - Totalausfall des Scrapers bei bereits veröffentlichtem Stand: der Katalog blieb unverändert erhalten, Exit-Code 1 — das Gerät sieht unveränderte Hashes und rührt nichts an.
 - Build für alle sechs Zielgeräte plus `.iq`-Store-Paket.
 - 21 Node-Tests für Normalisierung, Paging, Hashing, Secret-Auswertung und die Sperre.

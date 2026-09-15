@@ -8,9 +8,12 @@ name: sync-lists
 # build.mjs angesprungen ist. Der alte Stand bleibt dann veroeffentlicht - das
 # ist Absicht: eine leere Liste wuerde die Favoriten auf dem Geraet loeschen.
 #
-# Wurde eine Liste wirklich stark verkleinert oder geleert, hebt allow_shrink
-# die Sperre fuer genau einen Lauf auf - von Hand ueber "Run workflow" oder
-# vom Handy mit {"event_type":"mobile_trigger","client_payload":{"allow_shrink":true}}.
+# Gesperrt wird nur eine leer gewordene Liste. Eine stark verkleinerte geht
+# ohne Zutun durch und hinterlaesst nur eine Warnung am Lauf.
+#
+# Wurde eine Liste wirklich geleert, hebt allow_shrink die Sperre fuer genau
+# einen Lauf auf - von Hand ueber "Run workflow" oder vom Handy mit
+# {"event_type":"mobile_trigger","client_payload":{"allow_shrink":true}}.
 # Der Zeitplan kann das nie: ein kaputter Scraper faellt sonst genau dann auf
 # eine leere Liste, wenn niemand hinsieht. Auf dem Geraet fragt die App vor
 # vielen Loeschungen trotzdem noch einmal nach; eine ganz leere Liste
@@ -37,7 +40,7 @@ on:
   workflow_dispatch:
     inputs:
       allow_shrink:
-        description: "Stark geschrumpfte oder leere Listen veroeffentlichen (nur nach bewusstem Aufraeumen)"
+        description: "Leer gewordene Listen veroeffentlichen (nur nach bewusstem Leeren)"
         type: boolean
         default: true
   repository_dispatch:

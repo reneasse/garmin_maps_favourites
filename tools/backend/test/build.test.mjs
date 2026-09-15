@@ -149,11 +149,12 @@ test('paginate schneidet in Seiten fester Groesse', () => {
   assert.equal(paginate([], 25).length, 0);
 });
 
-test('die Sperre haelt leere und geschrumpfte Listen zurueck', () => {
+test('die Sperre haelt nur leere Listen zurueck', () => {
   assert.equal(guard(10, 0).ok, false);
-  assert.equal(guard(10, 4).ok, false);
-  assert.equal(guard(10, 5).ok, true);
   assert.equal(guard(10, 12).ok, true);
+  // Stark geschrumpft geht durch, meldet sich aber im Log.
+  assert.deepEqual(guard(11, 1), { ok: true, reason: '1 statt 11 - stark geschrumpft' });
+  assert.equal(guard(10, 5).reason, '');
   // Erster Lauf: es gibt nichts zu verlieren.
   assert.equal(guard(0, 30).ok, true);
   // Auch ein einzelner letzter Ort geht nicht still verloren.

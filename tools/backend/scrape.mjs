@@ -238,6 +238,41 @@ async function describePage(page, { responses, places }) {
 }
 
 /**
+ * Laeuft im Browser: scrollt den Container, der die Eintraege traegt, ans Ende
+ * und gibt dessen Mitte zurueck (fuer das Mausrad), oder null.
+ *
+ * Der Container ist nicht div[role="main"] selbst - das scrollt nicht, und
+ * scrollTop darauf zu setzen bewirkt nichts. Bei der Kartensuche ist es
+ * div[role="feed"], bei einer geteilten Liste gibt es das nicht. Dort scrollt
+ * ein namenloses <div> irgendwo darin. Gesucht wird es deshalb an dem, was es
+ * ausmacht: overflow-y erlaubt Scrollen, und es gibt etwas zu scrollen. Von
+ * mehreren Kandidaten gewinnt der mit dem meisten Inhalt.
+ *
+ * Bleibt das aus, kommt nur die erste Antwort durch - genau 20 Orte, egal wie
+ * lang die Liste ist.
+ */
+function scrollPanelToEnd() {
+  const scrollable = (el) => {
+    const { overflowY } = getComputedStyle(el);
+    return (overflowY === 'auto' || overflowY === 'scroll')
+      && el.scrollHeight > el.clientHeight + 10;
+  };
+
+  let panel = document.querySelector('div[role="feed"]');
+  if (panel == null || !scrollable(panel)) {
+    const root = document.querySelector('div[role="main"]') ?? document.body;
+    panel = [root, ...root.querySelectorAll('div')]
+      .filter(scrollable)
+      .sort((a, b) => b.scrollHeight - a.scrollHeight)[0] ?? null;
+  }
+  if (panel == null) return null;
+
+  panel.scrollTop = panel.scrollHeight;
+  const box = panel.getBoundingClientRect();
+  return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+}
+
+/**
  * Scrollt das Panel, bis nichts mehr dazukommt.
  *
  * Gezaehlt wird, was aus den Antworten gefallen ist, nicht was im DOM steht:
@@ -250,12 +285,14 @@ async function scrollUntilSettled(page, count, { rounds = 60, settle = 3, pause 
   let stable = 0;
 
   for (let i = 0; i < rounds && stable < settle; i++) {
-    await page.evaluate(() => {
-      const panel = document.querySelector('div[role="feed"]')
-        ?? document.querySelector('div[role="main"]')
-        ?? document.scrollingElement;
-      if (panel) panel.scrollTop = panel.scrollHeight;
-    });
+    const target = await page.evaluate(scrollPanelToEnd);
+    // Zusaetzlich das Mausrad ueber dem Panel: Google haengt das Nachladen
+    // teils an Wheel-Events statt an die Scrollposition, und so scrollt auch
+    // ein Nutzer.
+    if (target) {
+      await page.mouse.move(target.x, target.y);
+      await page.mouse.wheel(0, 4000);
+    }
     await page.waitForTimeout(pause);
 
     const now = count();
@@ -270,8 +307,9 @@ async function scrollUntilSettled(page, count, { rounds = 60, settle = 3, pause 
 }
 
 /**
- * -> { places, diagnosis }. `diagnosis` beschreibt die Seite, wenn keine Orte
- * kamen, und ist sonst null.
+ * -> { places, diagnosis, responses }. `diagnosis` beschreibt die Seite, wenn
+ * keine Orte kamen, und ist sonst null. `responses` zaehlt die mitgelesenen
+ * Antworten - bleibt es bei einer, hat das Nachladen nicht gegriffen.
  *
  * Null Orte sind hier kein Fehler mehr: eine geleerte Liste sieht genauso aus
  * wie ein gebrochener Scraper, und nur build.mjs kennt den vorigen Stand, an
@@ -331,7 +369,7 @@ export async function scrapeList(url, { locale = 'de-DE', timeout = 60000, headl
     const diagnosis = places.length === 0
       ? await describePage(page, { responses, places: 0 })
       : null;
-    return { places, diagnosis };
+    return { places, diagnosis, responses };
   } finally {
     await browser.close();
   }
@@ -353,9 +391,9 @@ async function main() {
       continue;
     }
     try {
-      const { places, diagnosis } = await scrapeList(url);
+      const { places, diagnosis, responses } = await scrapeList(url);
       lists[list.name] = { ok: true, places };
-      console.log(`${list.name}: ${places.length} Orte`);
+      console.log(`${list.name}: ${places.length} Orte aus ${responses} Antworten`);
       if (diagnosis) {
         // Leer ist erlaubt, aber verdaechtig - bricht der Scraper, ist das hier
         // die einzige Stelle, an der man es sieht.

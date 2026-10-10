@@ -163,8 +163,16 @@ export function validCoord(lat, lon) {
  * Eindeutig gemacht wird nach dem Falten, nicht davor: "Cafe" mit und ohne
  * Akzent sind auf dem Geraet derselbe Name, und der Name ist dort der einzige
  * Schluessel.
+ *
+ * `previous` sind die Eintraege des zuletzt veroeffentlichten Stands. Ein Ort,
+ * der dort schon stand, behaelt seine Kennziffer - neue bekommen die erste
+ * freie. Frueher wurde nach der Sortierung durchgezaehlt: kam ein ALDI hinzu,
+ * der suedlicher lag als die vorhandenen, rutschten alle dahinter eine Nummer
+ * weiter. Das Geraet sah dieselben Namen wie vorher, schrieb nichts, und der
+ * neue Ort kam nie an - waehrend der entfernte als "ALDI SUeD 4" stehen blieb.
+ * Nummern duerfen dadurch Luecken haben; das ist der Preis fuer Ruhe.
  */
-export function normalise(places, { nameMaxLength = 15 } = {}) {
+export function normalise(places, { nameMaxLength = 15, previous = [] } = {}) {
   const cleaned = [];
   const seenPlaces = new Set();
 
@@ -184,16 +192,52 @@ export function normalise(places, { nameMaxLength = 15 } = {}) {
   cleaned.sort((a, b) =>
     a.name.localeCompare(b.name, 'en') || a.lat - b.lat || a.lon - b.lon);
 
+  // Die Kennziffer zaehlt gegen dasselbe Byte-Budget: bliebe sie aussen vor,
+  // schnitte das Geraet genau sie wieder ab - und die Doppelgaenger fielen
+  // doch wieder zusammen.
+  const numbered = (name, n) => {
+    if (n === 1) return name;
+    const suffix = ` ${n}`;
+    const room = Math.max(1, nameMaxLength - Buffer.byteLength(suffix, 'utf8'));
+    return `${cutToBytes(name, room).trim()}${suffix}`;
+  };
+
+  // Alte Namen nach Koordinate, wie sie roundCoord() liefert.
+  const before = new Map();
+  for (const entry of Array.isArray(previous) ? previous : []) {
+    if (!Array.isArray(entry) || typeof entry[0] !== 'string') continue;
+    const key = `${roundCoord(entry[1])}|${roundCoord(entry[2])}`;
+    if (!before.has(key)) before.set(key, []);
+    before.get(key).push(entry[0]);
+  }
+
+  /** Der alte Name dieses Orts, wenn er zu seinem heutigen Rumpf passt. */
+  const inherited = ({ name, lat, lon }) => {
+    for (const old of before.get(`${lat}|${lon}`) ?? []) {
+      if (old === name) return old;
+      const match = / (\d+)$/.exec(old);
+      const n = match ? Number(match[1]) : 0;
+      if (n >= 2 && numbered(name, n) === old) return old;
+    }
+    return null;
+  };
+
+  // Zuerst bekommen alle bekannten Orte ihren alten Namen zurueck, erst danach
+  // werden die neuen verteilt - sonst schnappte ein neuer Ort, der vorne
+  // einsortiert ist, einem bekannten die Nummer weg.
   const used = new Set();
-  return cleaned.map(({ name, lat, lon }) => {
-    let unique = name;
-    for (let n = 2; used.has(unique); n++) {
-      // Die Kennziffer zaehlt gegen dasselbe Byte-Budget: bliebe sie aussen
-      // vor, schnitte das Geraet genau sie wieder ab - und die Doppelgaenger
-      // fielen doch wieder zusammen.
-      const suffix = ` ${n}`;
-      const room = Math.max(1, nameMaxLength - Buffer.byteLength(suffix, 'utf8'));
-      unique = `${cutToBytes(name, room).trim()}${suffix}`;
+  const names = cleaned.map((place) => {
+    const old = inherited(place);
+    if (old == null || used.has(old)) return null;
+    used.add(old);
+    return old;
+  });
+
+  return cleaned.map(({ name, lat, lon }, i) => {
+    let unique = names[i];
+    for (let n = 1; unique == null; n++) {
+      const candidate = numbered(name, n);
+      if (!used.has(candidate)) unique = candidate;
     }
     used.add(unique);
     return [unique, lat, lon];
@@ -323,6 +367,22 @@ async function readJson(file, fallback) {
   }
 }
 
+/**
+ * Die Eintraege des zuletzt veroeffentlichten Stands einer Liste, oder [].
+ *
+ * Gebraucht nur fuer die Kennziffern in normalise(). Fehlt eine Seite, bleibt
+ * es bei dem, was da ist - schlimmstenfalls wird wie frueher neu durchgezaehlt.
+ */
+async function readPreviousEntries(id, previous) {
+  const pages = Number.isInteger(previous?.p) ? previous.p : 0;
+  const entries = [];
+  for (let i = 0; i < pages; i++) {
+    const page = await readJson(path.join(DOCS, 'l', id, `${i}.json`), null);
+    if (Array.isArray(page?.e)) entries.push(...page.e);
+  }
+  return entries;
+}
+
 async function writeList(id, pages) {
   const dir = path.join(DOCS, 'l', id);
   await rm(dir, { recursive: true, force: true });
@@ -377,7 +437,10 @@ async function main() {
     }
     if (coverage.reason) console.log(`::warning::${list.name}: ${coverage.reason}`);
 
-    const entries = normalise(result.places, { nameMaxLength });
+    const entries = normalise(result.places, {
+      nameMaxLength,
+      previous: await readPreviousEntries(id, previous)
+    });
     const verdict = guard(previous?.c ?? 0, entries.length);
     if (!verdict.ok && !allowShrink) {
       failures.push(`${list.name}: ${verdict.reason}`);

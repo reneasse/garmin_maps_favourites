@@ -9,7 +9,8 @@ using Toybox.Time;
 //!   "cat"      Array          - letzter Katalog, [id, name, count, hash, pages]
 //!   "st"       Dictionary     - {"t" Zeit, "e" Code, "n" Anzahl, "b" Blockade}
 //!   "idx"      Array<String>  - Listen, zu denen ein Zustand existiert
-//!   "w"+id     Dictionary     - {"h" Hash, "n" Array<String> geschriebene Namen}
+//!   "w"+id     Dictionary     - {"h" Hash, "n" Array<String> geschriebene Namen,
+//!                                "c" Array<Float> deren Koordinaten, je zwei}
 //!
 //! Bewusst ein eigener Key je Liste: der Hintergrundprozess hat 32 kB Heap und
 //! darf nie gezwungen sein, alle ~200 Namen auf einmal zu laden. Nebenbei bleibt
@@ -18,6 +19,10 @@ using Toybox.Time;
 //! Der gespeicherte Hash ist die Abkuerzung: stimmt er mit dem Katalog ueberein,
 //! wird die Liste gar nicht erst geladen. Ein leerer Hash heisst "unfertig" und
 //! erzwingt beim naechsten Lauf einen frischen Abgleich.
+//!
+//! Die Koordinaten stehen hier, weil das Geraet sie nicht hergibt: `Waypoint`
+//! kennt kein getLocation(). Ohne sie hielte der Abgleich einen Namen, der
+//! inzwischen woanders hinzeigt, fuer erledigt.
 (:background)
 module SyncStore {
 
@@ -115,11 +120,38 @@ module SyncStore {
         return stringArray(raw["n"]);
     }
 
+    //! Koordinaten zu listNames(), je zwei Werte, in derselben Reihenfolge.
+    //! Leer, wenn etwas daran nicht stimmt - dann gilt jede als unbekannt.
+    (:background)
+    function listCoords(id as String) as Array<Float> {
+        var out = [] as Array<Float>;
+        var raw = get(listKey(id));
+        if (!(raw instanceof Dictionary)) { return out; }
+        var coords = raw["c"];
+        if (!(coords instanceof Array)) { return out; }
+        for (var i = 0; i < coords.size(); i++) {
+            var v = coords[i];
+            if (!(v instanceof Float)) { return [] as Array<Float>; }
+            out.add(v);
+        }
+        return out;
+    }
+
+    //! Kennt der Zustand zu jedem Namen die Koordinate? Ein Zustand aus der
+    //! Zeit, bevor sie gemerkt wurde, kennt keine.
+    (:background)
+    function hasCoords(id as String) as Boolean {
+        return listCoords(id).size() == listNames(id).size() * 2;
+    }
+
     //! `hash` leer lassen, wenn der Abgleich unvollstaendig blieb - dann holt
     //! der naechste Lauf die Liste erneut und macht weiter, wo er aufhoerte.
+    //! `coords` gehoeren zu `names`, je zwei Werte.
     (:background)
-    function saveList(id as String, hash as String, names as Array<String>) as Void {
-        set(listKey(id), { "h" => hash, "n" => names });
+    function saveList(
+        id as String, hash as String, names as Array<String>, coords as Array<Float>
+    ) as Void {
+        set(listKey(id), { "h" => hash, "n" => names, "c" => coords });
         rememberId(id);
     }
 

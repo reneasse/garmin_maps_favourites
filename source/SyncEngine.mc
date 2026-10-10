@@ -21,6 +21,12 @@ using Toybox.System;
 //!                 hinterlaesst so nie einen falschen, nur einen unfertigen
 //!                 Zustand.
 //!
+//!                 Das traegt nur, wenn als geschrieben gilt, was wirklich
+//!                 geschrieben wurde. Frueher merkte sich der Hintergrund das
+//!                 ganze Soll: bei 37 neuen Orten standen nach dem ersten Lauf
+//!                 20 am Geraet und 37 im Zustand, der zweite Lauf fand keine
+//!                 Differenz mehr, meldete "Aktuell" - und 17 Orte kamen nie an.
+//!
 //! Verglichen wird durchgehend ueber Geraetenamen, nicht ueber die Namen aus
 //! der Google-Liste - siehe WaypointWriter.shorten(). Wer das aufweicht, bekommt
 //! wieder den Fehler, an dem die App zuerst gescheitert ist: nichts wird
@@ -245,6 +251,10 @@ class SyncEngine {
     hidden function needsFetch(id as String, hash as String) as Boolean {
         var stored = SyncStore.listHash(id);
         if (!stored.equals(hash)) { return true; }
+        // Ein Zustand ohne Koordinaten stammt aus der Zeit, als nur Namen
+        // verglichen wurden - einmal neu abgleichen, damit Orte, deren Name
+        // inzwischen woanders hinzeigt, an ihre Stelle kommen.
+        if (!SyncStore.hasCoords(id)) { return true; }
         if (!_havePresent) { return false; }
         var names = SyncStore.listNames(id);
         for (var i = 0; i < names.size(); i++) {
@@ -321,7 +331,8 @@ class SyncEngine {
         var toAdd = Util.difference(desired, reference);
         var toDel = Util.difference(old, desired);
 
-        // Sperre 2: ungewoehnlich viele Loeschungen auf einmal.
+        // Sperre 2: ungewoehnlich viele Loeschungen auf einmal. Ein Umzug
+        // zaehlt nicht dazu - der Ort bleibt, er steht nur woanders.
         if (blocksBulkDelete(toDel.size(), old.size())) {
             _blocked = toDel.size();
             _error = SyncStore.STAT_BULK;
@@ -330,13 +341,59 @@ class SyncEngine {
             return;
         }
 
+        var others = SyncStore.namesExcept(_curId);
+        var oldCoords = SyncStore.listCoords(_curId);
+        var wanted = wantedCoords();
+
+        // Umziehen muss, was unter seinem Namen schon steht, aber nicht an
+        // der Stelle, die die Liste jetzt nennt - etwa weil eine Kennziffer
+        // inzwischen einen anderen Ort meint. Der Name allein saehe dort
+        // keinen Unterschied.
+        var settled = [] as Array<Boolean>;
+        var toMove = [] as Array<String>;
+        for (var i = 0; i < desired.size(); i++) {
+            var ok = isSettled(desired[i], wanted[2 * i], wanted[2 * i + 1],
+                old, oldCoords, others);
+            settled.add(ok);
+            if (!ok && Util.contains(reference, desired[i])) { toMove.add(desired[i]); }
+        }
+
         if (toDel.size() > 0) {
-            WaypointWriter.removeNames(toDel, SyncStore.namesExcept(_curId));
+            WaypointWriter.removeNames(toDel, others);
             _ops += toDel.size();
         }
 
-        var added = addPlaces(toAdd);
-        if (!storeResult(desired, added >= toAdd.size())) { _partial = true; }
+        // Was ins Budget passt: neue Orte zuerst, dann Umzuege, die als
+        // Loeschen und Schreiben zwei Operationen kosten. Ein Umzug wird nur
+        // begonnen, wenn er auch zu Ende geht.
+        var left = _budget - _ops;
+        var adds = [] as Array<String>;
+        for (var k = 0; k < toAdd.size() && left >= 1; k++) {
+            adds.add(toAdd[k]);
+            left -= 1;
+        }
+        var moves = [] as Array<String>;
+        for (var m = 0; m < toMove.size() && left >= 2; m++) {
+            moves.add(toMove[m]);
+            left -= 2;
+        }
+        if (moves.size() > 0) {
+            WaypointWriter.removeNames(moves, others);
+            _ops += moves.size();
+        }
+
+        var fresh = writePlaces(adds);
+        fresh.addAll(writePlaces(moves));
+        var withinBudget = adds.size() == toAdd.size() && moves.size() == toMove.size();
+        if (_havePresent) { _present = WaypointWriter.presentNames(); }
+
+        var held = heldState(desired, wanted, reference, settled, moves, fresh,
+            _havePresent ? _present : null, old, oldCoords);
+        var heldNames = held[0] as Array<String>;
+        var complete = isComplete(desired, heldNames, withinBudget);
+        // Leerer Hash = unfertig: der naechste Lauf holt die Liste erneut.
+        SyncStore.saveList(_curId, complete ? _curHash : "", heldNames, held[1] as Array<Float>);
+        if (!complete) { _partial = true; }
         _done++;
         beginNextList();
     }
@@ -348,24 +405,55 @@ class SyncEngine {
         return deletions > stored / 2;
     }
 
-    //! Schreibt so viele Orte, wie das Budget hergibt; liefert die Anzahl.
-    hidden function addPlaces(toAdd as Array<String>) as Number {
-        var added = 0;
-        for (var i = 0; i < toAdd.size(); i++) {
-            if (_ops >= _budget) { break; }
-            var place = findPlace(toAdd[i]);
+    //! Die Koordinaten zu _names, je zwei Werte in derselben Reihenfolge.
+    hidden function wantedCoords() as Array<Float> {
+        var out = [] as Array<Float>;
+        for (var i = 0; i < _names.size(); i++) {
+            var p = i < _places.size() ? _places[i] : null;
+            if (p instanceof Array && p.size() > Feed.E_LON) {
+                out.add(p[Feed.E_LAT] as Float);
+                out.add(p[Feed.E_LON] as Float);
+            } else {
+                out.add(0.0);
+                out.add(0.0);
+            }
+        }
+        return out;
+    }
+
+    //! Steht `name` laut Zustand schon an dieser Stelle?
+    //!
+    //! Unbekannt zaehlt als nein - ein Zustand ohne Koordinaten loest einmal
+    //! einen Umzug fuer alles aus. Ein Name, den eine andere Liste ebenfalls
+    //! beansprucht, gilt als erledigt: ihn umzuziehen hiesse, den Ort der
+    //! anderen Liste zu loeschen.
+    function isSettled(
+        name as String, lat as Float, lon as Float,
+        old as Array<String>, oldCoords as Array<Float>, others as Array<String>
+    ) as Boolean {
+        if (Util.contains(others, name)) { return true; }
+        var j = Util.indexOf(old, name);
+        if (j < 0 || oldCoords.size() < 2 * j + 2) { return false; }
+        return Util.near(oldCoords[2 * j], oldCoords[2 * j + 1], lat, lon);
+    }
+
+    //! Schreibt die Orte zu diesen Geraetenamen; liefert die geschriebenen.
+    hidden function writePlaces(names as Array<String>) as Array<String> {
+        var out = [] as Array<String>;
+        for (var i = 0; i < names.size(); i++) {
+            var place = findPlace(names[i]);
             if (place == null) { continue; }
             // Geschrieben wird der schon gekuerzte Name, nicht der aus der
             // Liste: nur so ist der zurueckgelesene mit dem gewuenschten gleich.
             var ok = WaypointWriter.add(
-                toAdd[i],
+                names[i],
                 place[Feed.E_LAT] as Float,
                 place[Feed.E_LON] as Float
             );
             _ops++;
-            if (ok) { added++; }
+            if (ok) { out.add(names[i]); }
         }
-        return added;
+        return out;
     }
 
     //! `name` ist ein Geraetename, also der gekuerzte. Gesucht wird ueber
@@ -381,36 +469,56 @@ class SyncEngine {
         return null;
     }
 
-    //! Im Vordergrund wird der Ist-Stand zurueckgelesen und nur das gemerkt,
-    //! was dort auch wirklich steht. Im Hintergrund fehlt dafuer der Speicher;
-    //! dort korrigiert der naechste Vordergrundlauf.
+    //! Was nach dem Anwenden wirklich am Geraet steht, und wo: [Namen,
+    //! Koordinaten]. Genau das wird gemerkt - nie das Soll.
     //!
-    //! Rueckgabe: ob die Liste vollstaendig auf dem Geraet steht.
+    //!   frisch geschrieben         -> an der Stelle aus der Liste
+    //!   schon da, an seiner Stelle -> ebenso
+    //!   schon da, Umzug steht aus  -> an der alten Stelle, 0/0 wenn unbekannt;
+    //!                                 der naechste Lauf sieht den Unterschied
+    //!   nie geschrieben, oder fuer
+    //!   den Umzug geloescht und
+    //!   nicht wieder geschrieben   -> fehlt
     //!
-    //! Massgeblich ist das Zurueckgelesene, nicht der Rueckgabewert von
-    //! saveWaypoint(). Ist die Standortliste voll, meldet saveWaypoint weiter
-    //! Erfolg, und der Wegpunkt fehlt trotzdem - ohne diese Pruefung wuerde die
-    //! App den Hash speichern und sich fuer fertig halten.
-    hidden function storeResult(desired as Array<String>, withinBudget as Boolean) as Boolean {
-        var written = desired;
-        var complete = withinBudget;
-
-        if (_havePresent) {
-            _present = WaypointWriter.presentNames();
-            written = Util.intersection(desired, _present);
-            complete = isComplete(desired, _present, withinBudget);
+    //! `present` ist im Vordergrund der zurueckgelesene Bestand: massgeblich
+    //! ist dort, was wirklich steht, nicht der Rueckgabewert von
+    //! saveWaypoint() - ist die Standortliste voll, meldet es weiter Erfolg.
+    //! Im Hintergrund fehlt dafuer der Speicher, `present` ist dann null, und
+    //! der naechste Vordergrundlauf korrigiert.
+    function heldState(
+        desired as Array<String>, wanted as Array<Float>, reference as Array<String>,
+        settled as Array<Boolean>, moved as Array<String>, fresh as Array<String>,
+        present as Array<String> or Null, old as Array<String>, oldCoords as Array<Float>
+    ) as Array {
+        var names = [] as Array<String>;
+        var coords = [] as Array<Float>;
+        for (var i = 0; i < desired.size(); i++) {
+            var name = desired[i];
+            var lat = wanted[2 * i];
+            var lon = wanted[2 * i + 1];
+            if (!Util.contains(fresh, name)) {
+                if (!Util.contains(reference, name) || Util.contains(moved, name)) { continue; }
+                if (!settled[i]) {
+                    var j = Util.indexOf(old, name);
+                    var known = j >= 0 && oldCoords.size() >= 2 * j + 2;
+                    lat = known ? oldCoords[2 * j] : 0.0;
+                    lon = known ? oldCoords[2 * j + 1] : 0.0;
+                }
+            }
+            if (present != null && !Util.contains(present, name)) { continue; }
+            names.add(name);
+            coords.add(lat);
+            coords.add(lon);
         }
-
-        // Leerer Hash = unfertig: der naechste Lauf holt die Liste erneut.
-        SyncStore.saveList(_curId, complete ? _curHash : "", written);
-        return complete;
+        return [names, coords] as Array;
     }
 
     //! Steht wirklich alles Gewuenschte am Geraet?
     //!
     //! Getrennt herausgezogen, weil daran die Ehrlichkeit der Anzeige haengt:
     //! ist die Standortliste voll, meldet saveWaypoint() weiter Erfolg. Nur der
-    //! zurueckgelesene Bestand darf entscheiden.
+    //! zurueckgelesene Bestand darf entscheiden - `present` ist deshalb, was
+    //! heldState() festhaelt, im Vordergrund also das Zurueckgelesene.
     function isComplete(
         desired as Array<String>, present as Array<String>, withinBudget as Boolean
     ) as Boolean {

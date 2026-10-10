@@ -164,7 +164,7 @@ IDLE → Katalog holen → je gewählter Liste:
        → Aufräumen (nur Vordergrund) → fertig
 ```
 
-Der Zustand liegt in `Application.Storage`, **ein Key je Liste** (`w<id>`) mit Hash und den geschriebenen Namen. Der Hintergrundprozess muss so nie alle ~200 Namen gleichzeitig laden, und jeder Wert bleibt weit unter der 8-kB-Grenze von Storage.
+Der Zustand liegt in `Application.Storage`, **ein Key je Liste** (`w<id>`) mit Hash, den geschriebenen Namen und deren Koordinaten. Der Hintergrundprozess muss so nie alle ~200 Namen gleichzeitig laden, und jeder Wert bleibt weit unter der 8-kB-Grenze von Storage.
 
 Vier Entscheidungen, die man dem Code sonst nicht ansieht:
 
@@ -194,7 +194,14 @@ Die rein asciischen Namen derselben Liste liefen jedes Mal unbeschadet durch —
 
 **Unfertig wird nicht gemerkt, sondern vergessen.** Der Hintergrundlauf wendet höchstens 20 Änderungen an. Was liegen bleibt, landet nicht als Plan im Storage — stattdessen bleibt der Hash der Liste leer, und der nächste Lauf holt sie erneut und arbeitet den Rest ab. Ein Abbruch mitten drin hinterlässt so nie einen falschen, nur einen unfertigen Zustand.
 
+Das trägt nur, wenn als geschrieben gilt, was wirklich geschrieben wurde (`SyncEngine.heldState()`). Früher merkte sich der Hintergrund das ganze Soll: bei 37 neuen Orten standen nach dem ersten Lauf 20 am Gerät und 37 im Zustand, der zweite Lauf fand keine Differenz mehr, meldete *Aktuell* — und 17 Orte kamen nie an. Nur ein Vordergrundlauf holte sie nach.
+
 **Namen sind der einzige Schlüssel.** `saveWaypoint()` gibt keine Id zurück, und `Waypoint` kennt kein `getLocation()`. Wiedergefunden wird ausschließlich über den Namen — deshalb faltet das Backend die Namen nach ASCII, kürzt sie auf 15 Bytes und macht sie erst dann eindeutig (` 2`, ` 3` …, die Kennziffer im Budget eingerechnet), bevor sie das Gerät je sieht. Eindeutig **nach** dem Falten: `Café` und `Cafe` sind auf dem Gerät derselbe Name. Die App rechnet trotzdem noch einmal selbst — sie muss auch mit älteren, ungefalteten Daten richtig liegen — und kommt dabei auf dasselbe Ergebnis. Taucht auf dem Gerät ein `~2` auf, waren die Daten breiter als der Ortsspeicher.
+
+**Der Name allein reicht trotzdem nicht.** Eine Kennziffer kann den Ort wechseln: früher wurde nach Breitengrad durchgezählt, und ein neuer ALDI südlich der anderen schob alle dahinter eine Nummer weiter. Am Gerät standen danach dieselben vier Namen wie vorher — nichts wurde geschrieben, der neue Ort fehlte, der entfernte blieb als `ALDI SUeD 4` stehen. Zwei Dinge verhindern das jetzt:
+
+- **Das Backend vergibt stabile Kennziffern.** Ein Ort, der schon im zuletzt veröffentlichten Stand stand, behält seinen Namen; neue Orte bekommen die erste freie Nummer. Lücken (`2`, `4` ohne `3`) sind gewollt.
+- **Die App merkt sich, wo sie einen Ort hingeschrieben hat.** Zeigt ein Name in der Liste auf eine andere Stelle als gemerkt (mehr als etwa 5 m), wird der Wegpunkt gelöscht und neu geschrieben. Das fängt auch Orte, die in Google verschoben wurden. Ein Zustand aus der Zeit vor dieser Änderung kennt keine Koordinaten; er wird beim ersten Lauf einmal komplett neu geschrieben — im Hintergrund zehn Orte je Lauf, ohne dass zwischendurch einer fehlt.
 
 ### Sicherungen
 
@@ -247,7 +254,7 @@ Backend:
 cd tools/backend
 npm install
 npx playwright install chromium
-npm test                       # 26 Tests, kein Browser noetig
+npm test                       # 33 Tests, kein Browser noetig
 LIST_URLS='{"Cafes":"https://…"}' node scrape.mjs   # schreibt .cache/raw.json
 LIST_SALT=… node build.mjs                          # schreibt docs/
 ```
@@ -274,7 +281,7 @@ Launcher-Icons neu erzeugen: `pwsh tools/make_icon.ps1` (schreibt PNG und `drawa
 | [source/ListPickerDelegate.mc](source/ListPickerDelegate.mc) | Listenauswahl am Gerät |
 | [source/StatusText.mc](source/StatusText.mc) | Zustandscodes → Anzeigetext |
 | [source/Util.mc](source/Util.mc) | Mengenvergleich, Koordinatenprüfung, Zeitformat |
-| [source/Tests.mc](source/Tests.mc) | 32 Unit-Tests |
+| [source/Tests.mc](source/Tests.mc) | 37 Unit-Tests |
 | [tools/backend/scrape.mjs](tools/backend/scrape.mjs) | Playwright-Scraper |
 | [tools/backend/build.mjs](tools/backend/build.mjs) | Normalisierung, Paging, Hashing, Sperren |
 | [.github/workflows/sync-lists.yml](.github/workflows/sync-lists.yml) | Cron und Veröffentlichung |
@@ -289,7 +296,7 @@ Eigene Codes bleiben unter 100. Alles ab 100 ist ein wörtlicher HTTP-Status, al
 
 **Getestet im Simulator (Edge 1040):**
 
-- 32 Unit-Tests, davon zwei gegen die echte Geräte-API: schreiben, wiederfinden, gezielt löschen über `PersistedContent` — inklusive der Regel, dass ein von einer zweiten Liste beanspruchter Name stehen bleibt, und der Zusicherung, dass der zurückgelesene Name dem geschriebenen gleicht.
+- 32 der 37 Unit-Tests (die fünf neuen siehe unten), davon zwei gegen die echte Geräte-API: schreiben, wiederfinden, gezielt löschen über `PersistedContent` — inklusive der Regel, dass ein von einer zweiten Liste beanspruchter Name stehen bleibt, und der Zusicherung, dass der zurückgelesene Name dem geschriebenen gleicht.
 - **Die Grenzen des Ortsspeichers im Simulator**, auf Edge 540, 840, 1040 und 1050 einzeln nachgemessen: 15 **Zeichen**, darüber wird wortlos abgeschnitten; bis dahin ist der Weg verlustfrei — auch mit Akzenten (`é`), Umlauten, `ß`, Leerzeichen am Ende und `~`. Das Gerät ist in beidem strenger (15 Bytes, nur ASCII), also kann der Simulator keinen der beiden Namensfehler zeigen. Geprüft wird hier deshalb nur die Richtung: dass ankommt, was `shorten()` liefert.
 - **Der komplette Weg, dreimal hintereinander gegen einen lokalen HTTP-Server:**
   1. Erster Lauf: Katalog + zwei Seiten geholt, 8 Orte als Wegpunkte geschrieben, beide Hashes gespeichert, Status *Aktuell*.
@@ -298,11 +305,13 @@ Eigene Codes bleiben unter 100. Alles ab 100 ist ein wörtlicher HTTP-Status, al
 - Die Veröffentlichungssperre im Backend: eine leer gewordene Liste wurde abgelehnt, der alte Stand blieb stehen, der Lauf endete mit Exit-Code 1. Eine von 11 auf 1 geschrumpfte Liste ging im selben Lauf mit Warnung durch.
 - Totalausfall des Scrapers bei bereits veröffentlichtem Stand: der Katalog blieb unverändert erhalten, Exit-Code 1 — das Gerät sieht unveränderte Hashes und rührt nichts an.
 - Build für alle sechs Zielgeräte plus `.iq`-Store-Paket.
-- 26 Node-Tests für Normalisierung, Paging, Hashing, Secret-Auswertung, die Sperre und die Vollständigkeitsprüfung.
+- 33 Node-Tests für Normalisierung, stabile Kennziffern, Paging, Hashing, Secret-Auswertung, die Sperre und die Vollständigkeitsprüfung.
 
 Der Simulator hält insgesamt **zehn** Orte und bringt neun eigene mit — für die App bleibt genau einer. Jeder weitere `saveWaypoint()`-Aufruf meldet Erfolg und schreibt nichts. Größere Mengen sind im Simulator deshalb nicht prüfbar, und der Geräte-Test kommt mit einem einzigen Wegpunkt aus.
 
 **Nicht getestet:**
+
+- **Der Abgleich über Koordinaten und das ehrliche Merken im Hintergrund** (`heldState()`, `isSettled()`, Storage-Feld `c`) sind ohne SDK geschrieben: weder kompiliert noch im Simulator gelaufen. Die Logik ist in einem Nachbau durchgespielt (37 neue Orte im Hintergrund, verschobene ALDI-Kennziffern, Umstellung eines Zustands ohne Koordinaten); die fünf neuen Unit-Tests in `Tests.mc` sind noch nicht gelaufen.
 
 - **Der Scraper gegen eine echte Google-Liste.** Er ist gegen das aktuelle Markup geschrieben, aber ungeprüft — hier ist zuerst mit Nacharbeit zu rechnen. `node scrape.mjs` meldet klar, wenn er nichts findet, und die Sperre in `build.mjs` fängt den Rest ab.
 - **Alles auf echter Hardware.** Offen: ob der Hintergrunddienst nach dem Einschalten wirklich zeitnah anläuft, wo die Längengrenze auf dem Gerät genau liegt (15 ASCII-Bytes kommen zurück, 17 Bytes mit Akzenten nicht — dazwischen liegt Spielraum, den nur die Hardware ausmisst; seit dem Falten steht kein Name mehr über 15 ASCII-Bytes an), wie viele Wegpunkte das Gerät tatsächlich annimmt, und ob die App-eigenen Favoriten beim Deinstallieren mitgelöscht werden.

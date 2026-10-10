@@ -18,6 +18,16 @@ module Util {
         return false;
     }
 
+    //! Position des Namens im Array, oder -1. Vergleich wie bei contains().
+    (:background)
+    function indexOf(list as Array<String>, name as String) as Number {
+        for (var i = 0; i < list.size(); i++) {
+            var v = list[i];
+            if (v instanceof String && v.equals(name)) { return i; }
+        }
+        return -1;
+    }
+
     //! Alle Eintraege aus `a`, die in `b` fehlen.
     (:background)
     function difference(a as Array<String>, b as Array<String>) as Array<String> {
@@ -57,6 +67,18 @@ module Util {
         if (lon < -180.0 || lon > 180.0) { return false; }
         if (lat == 0.0 && lon == 0.0) { return false; }
         return true;
+    }
+
+    //! Abstand, unter dem zwei Koordinaten dieselbe Stelle sind, in Grad
+    //! (gut fuenf Meter). Gemerkt wird als Float, also mit gut sieben Stellen:
+    //! bei 151 Grad Laenge sind das noch Schritte von 0.000015 - ein genauer
+    //! Vergleich hielte jeden Ort nach dem Umweg durch Storage fuer verschoben.
+    const NEAR_DEG = 0.00005;
+
+    //! Dieselbe Stelle, bis auf Rundung?
+    (:background)
+    function near(lat1 as Float, lon1 as Float, lat2 as Float, lon2 as Float) as Boolean {
+        return (lat1 - lat2).abs() <= NEAR_DEG && (lon1 - lon2).abs() <= NEAR_DEG;
     }
 
     (:background)

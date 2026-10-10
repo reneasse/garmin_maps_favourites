@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  cutToBytes, foldToAscii, normaliseName, normalise, roundCoord, validCoord,
+  cutToBytes, foldToAscii, normaliseName, normalise, pinName, roundCoord, validCoord,
   hashEntries, listId, paginate, guard, completeness, shrinkAllowed, findPrevious,
   catalogChanged, SCHEMA_VERSION
 } from '../build.mjs';
@@ -84,6 +84,20 @@ test('normalise sortiert, filtert und macht Namen eindeutig', () => {
   ], { nameMaxLength: 20 });
 
   assert.deepEqual(entries.map((e) => e[0]), ['Alpha', 'Alpha 2', 'Zebra']);
+});
+
+test('Pins heissen nach ihrer Koordinate, dezimal und ungekuerzt', () => {
+  // Gefaltet und gekuerzt hiesse der Pin sonst 4925'25.8"N 734.
+  const [[name]] = normalise([{ name: '49°25\'25.8"N 7°34\'08.0"E', lat: 49.423829, lon: 7.568892 }]);
+  assert.equal(name, '49.4238 7.5689');
+
+  assert.equal(pinName('49.423829, 7.568892', 49.423829, 7.568892, 15), '49.4238 7.5689');
+  // Lange Werte verlieren Nachkommastellen statt ihres Endes.
+  assert.equal(pinName('33°52\'07.7"S 151°12\'33.5"E', -33.86881, 151.20931, 15), '-33.869 151.209');
+
+  // Ein echter Name bleibt, auch wenn Ziffern darin stehen.
+  assert.equal(pinName('REWE', 49.4, 7.5, 15), null);
+  assert.equal(pinName('Haltestelle 49', 49.4, 7.5, 15), null);
 });
 
 test('normalise wirft echte Dubletten weg', () => {

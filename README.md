@@ -201,6 +201,7 @@ Die rein asciischen Namen derselben Liste liefen jedes Mal unbeschadet durch —
 Die Scraper-Kette hängt an undokumentiertem Google-HTML und wird irgendwann brechen. Sie darf dabei keine Favoriten mitnehmen:
 
 1. **Backend:** eine Liste, die leer zurückkommt, obwohl vorher etwas darin stand, wird nicht veröffentlicht — der alte Stand bleibt stehen, der Workflow schlägt laut fehl. Aufheben lässt sich das nur für einen bewusst gestarteten Lauf (siehe unten), nie vom Zeitplan aus. Eine auf unter die Hälfte geschrumpfte Liste geht dagegen ohne Zutun durch und hinterlässt nur eine Warnung am Lauf.
+1. **Backend, Vollständigkeit:** der Scraper liest die Anzahl aus dem Kopf der Google-Liste („42 Orte") mit. Fehlen Orte, versucht er es bis zu dreimal mit frischem Profil und vereinigt die Ergebnisse. Bleibt es unvollständig, wird die Liste nicht veröffentlicht — alter Stand bleibt, Workflow rot, `allow_shrink` hebt das **nicht** auf. Ohne diese Prüfung kamen 37 von 42 Orten an, bei jedem Lauf andere, und das Gerät löschte und schrieb Favoriten im Wechsel. Ist die Anzahl nicht lesbar, geht die Liste mit `::warning::… Vollstaendigkeit ungeprueft` durch.
 2. **App:** eine leer gewordene Liste bei vorher vorhandenem Bestand wird übersprungen, nicht angewendet.
 3. **App:** mehr als `max(5, Bestand/2)` Löschungen auf einmal werden blockiert. Der Vordergrund fragt beim nächsten *Jetzt synchronisieren* nach, der Hintergrund lässt es. Abschaltbar über `allowBulkDelete`.
 4. **App:** übersteigt die Summe der gewählten Listen `maxFavourites`, bricht der Sync **vor** der ersten Änderung ab.
@@ -246,7 +247,7 @@ Backend:
 cd tools/backend
 npm install
 npx playwright install chromium
-npm test                       # 21 Tests, kein Browser noetig
+npm test                       # 26 Tests, kein Browser noetig
 LIST_URLS='{"Cafes":"https://…"}' node scrape.mjs   # schreibt .cache/raw.json
 LIST_SALT=… node build.mjs                          # schreibt docs/
 ```
@@ -297,7 +298,7 @@ Eigene Codes bleiben unter 100. Alles ab 100 ist ein wörtlicher HTTP-Status, al
 - Die Veröffentlichungssperre im Backend: eine leer gewordene Liste wurde abgelehnt, der alte Stand blieb stehen, der Lauf endete mit Exit-Code 1. Eine von 11 auf 1 geschrumpfte Liste ging im selben Lauf mit Warnung durch.
 - Totalausfall des Scrapers bei bereits veröffentlichtem Stand: der Katalog blieb unverändert erhalten, Exit-Code 1 — das Gerät sieht unveränderte Hashes und rührt nichts an.
 - Build für alle sechs Zielgeräte plus `.iq`-Store-Paket.
-- 21 Node-Tests für Normalisierung, Paging, Hashing, Secret-Auswertung und die Sperre.
+- 26 Node-Tests für Normalisierung, Paging, Hashing, Secret-Auswertung, die Sperre und die Vollständigkeitsprüfung.
 
 Der Simulator hält insgesamt **zehn** Orte und bringt neun eigene mit — für die App bleibt genau einer. Jeder weitere `saveWaypoint()`-Aufruf meldet Erfolg und schreibt nichts. Größere Mengen sind im Simulator deshalb nicht prüfbar, und der Geräte-Test kommt mit einem einzigen Wegpunkt aus.
 

@@ -9,15 +9,25 @@
 // keine Koordinate mehr. Wer auf 'a[href*="/maps/place/"]' wartet, wartet
 // endlos auf etwas, das es nicht mehr gibt.
 //
-// Die Orte kommen stattdessen ueber einen Nachlade-Request (/search?tbm=map),
-// dessen Antwort Name und Koordinaten traegt. Diese Antwort wird hier
-// mitgelesen. Das ist kein schoenerer Weg, aber der einzige verbliebene.
+// Die Orte kommen stattdessen ueber zwei Requests, deren Antworten hier
+// mitgelesen werden. Das ist kein schoenerer Weg, aber der einzige verbliebene:
+//
+// - /maps/preview/entitylist/getlist ist die Liste selbst: alle Eintraege mit
+//   Namen und Koordinaten, auch gesetzte Pins ("49°25'25.8"N 7°34'08.0"E").
+// - /search?tbm=map loest beim Scrollen die Eintraege zu Google-Orten auf. Ein
+//   Pin ist kein Google-Ort und kommt dort nie vor - wer nur diese Antwort
+//   liest, verliert jeden Pin der Liste, ohne dass es auffaellt.
 //
 // Das ist und bleibt undokumentiertes Terrain. Wenn Google das Format aendert,
 // findet dieses Skript nichts mehr. Von hier aus ist das nicht von einer
 // bewusst geleerten Liste zu unterscheiden - deshalb entscheidet nicht dieses
 // Skript, sondern die Sperre in build.mjs: eine vorher gefuellte Liste, die
 // leer zurueckkommt, wird nur mit ausdruecklichem Zugestaendnis veroeffentlicht.
+//
+// Gefaehrlicher als leer ist halb: das Nachladen bleibt stecken, und es kommen
+// 37 von 42 Orten - bei jedem Lauf andere. Das Geraet loescht dann Favoriten
+// und legt sie beim naechsten Lauf wieder an. Deshalb wird die Anzahl, die
+// Google im Kopf der Liste anzeigt, mitgelesen und an build.mjs gereicht.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -32,6 +42,9 @@ const CACHE = path.join(CACHE_DIR, 'raw.json');
 // Kartensuche - praktisch, denn daran laesst sich das Auslesen unten gegen
 // viele Treffer pruefen, ohne eine fremde Liste anzufassen.
 const PAYLOAD_URL = '/search?tbm=map';
+
+// Der Request, der die Liste selbst bringt - samt Pins, siehe oben.
+const LIST_URL = '/maps/preview/entitylist/getlist';
 
 // Ohne Einwilligung zeigt Google statt der Karte eine Zwischenseite ("Bevor
 // Sie zu Google weitergehen"). Am Arbeitsplatz klickt man sie einmal weg, im
@@ -142,6 +155,53 @@ export function placesFromPayload(body) {
 }
 
 /**
+ * Eintraege aus der Antwort von getlist, der Liste selbst.
+ *
+ * Kein Stueckwerk wie bei /search, sondern ein einzelnes Array hinter dem
+ * XSSI-Vorspann. Ein Eintrag beginnt mit [null,[..,[null,null,lat,lon]
+ * - bei einem Google-Ort gefolgt von dessen Kennung als zwei vorzeichenbehaftete
+ * Dezimalzahlen ["5158439181059265237","-6426135483264128656"], bei einem Pin
+ * ohne - und dann dem Namen. Gesucht wird wieder nach dieser Form statt nach
+ * Position.
+ *
+ * Die Kennung wird in die Schreibweise von /search umgerechnet (0x..:0x..),
+ * damit dedupe() denselben Ort aus beiden Antworten als einen erkennt. Ein Pin
+ * hat keine und laeuft dort ueber Name und Koordinaten.
+ */
+const VALUE = String.raw`(?:null|-?\d+(?:\.\d+)?|"(?:[^"\\]|\\.)*")`;
+const NUMBER = String.raw`(-?\d+(?:\.\d+)?)`;
+const LIST_ENTRY = new RegExp(String.raw`\[null,\[${VALUE}(?:,${VALUE})*,`
+  + String.raw`\[null,null,${NUMBER},${NUMBER}\](?:,\["(-?\d+)","(-?\d+)"\])?\],`
+  + String.raw`"((?:[^"\\]|\\.)*)"`, 'g');
+
+/** Vorzeichenbehaftete 64-Bit-Dezimalzahl -> Hex, wie in 0x..:0x.. */
+function hexId(decimal) {
+  return `0x${BigInt.asUintN(64, BigInt(decimal)).toString(16)}`;
+}
+
+export function placesFromList(body) {
+  const source = typeof body === 'string' ? body : '';
+  const places = [];
+  const pattern = new RegExp(LIST_ENTRY.source, 'g');
+
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    let name;
+    try {
+      name = JSON.parse(`"${match[5]}"`);
+    } catch {
+      continue;
+    }
+    const lat = Number(match[1]);
+    const lon = Number(match[2]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    const id = match[3] == null ? undefined : `${hexId(match[3])}:${hexId(match[4])}`;
+    places.push({ id, name, lat, lon });
+  }
+  return places;
+}
+
+/**
  * Share-Links aus der Umgebung, als JSON `{"Listenname": "https://..."}`.
  *
  * Braucht man, sobald das Repository oeffentlich ist: die Links selbst oeffnen
@@ -168,6 +228,22 @@ export function usableUrl(url) {
   const value = String(url ?? '');
   if (!value.startsWith('http')) return false;
   return !value.includes('REPLACE_ME');
+}
+
+/**
+ * Die Anzahl, die Google im Kopf einer geteilten Liste anzeigt ("42 Orte").
+ *
+ * Nur die deutsche Form, passend zur festen Locale in scrapeList(): ein
+ * englisches "place" stuende auch in franzoesischen Adressen ("3 place de la
+ * Gare") und lieferte eine falsche Soll-Zahl - und eine zu hohe sperrt die
+ * Liste. Gezaehlt wird der erste Treffer, der Kopf steht vor den Eintraegen.
+ * Nichts gefunden ist null, nicht 0: eine unbekannte Zahl prueft nichts.
+ */
+const LIST_COUNT = /(?:^|[^\d.,])(\d{1,5})\s+(?:Orte|Ort)\b/;
+
+export function countFromText(text) {
+  const match = LIST_COUNT.exec(String(text ?? ''));
+  return match ? Number(match[1]) : null;
 }
 
 /** Doppelte weg - dieselbe Antwort kann mehrfach durchlaufen. */
@@ -238,8 +314,26 @@ async function describePage(page, { responses, places }) {
 }
 
 /**
+ * Die Soll-Zahl aus dem Kopf der Liste, oder null.
+ *
+ * Der Kopf baut sich nicht zwingend mit dem Panel auf - deshalb kurz warten,
+ * statt einmal zu fragen und eine unbekannte Zahl hinzunehmen.
+ */
+async function readListCount(page, timeout = 10000) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const text = await page.evaluate(() =>
+      (document.querySelector('div[role="main"]') ?? document.body).innerText ?? '');
+    const count = countFromText(text);
+    if (count != null || Date.now() >= deadline) return count;
+    await page.waitForTimeout(500);
+  }
+}
+
+/**
  * Laeuft im Browser: scrollt den Container, der die Eintraege traegt, ans Ende
- * und gibt dessen Mitte zurueck (fuer das Mausrad), oder null.
+ * - oder mit `back` ein Stueck zurueck - und gibt dessen Mitte zurueck (fuer
+ * das Mausrad), oder null.
  *
  * Der Container ist nicht div[role="main"] selbst - das scrollt nicht, und
  * scrollTop darauf zu setzen bewirkt nichts. Bei der Kartensuche ist es
@@ -251,7 +345,7 @@ async function describePage(page, { responses, places }) {
  * Bleibt das aus, kommt nur die erste Antwort durch - genau 20 Orte, egal wie
  * lang die Liste ist.
  */
-function scrollPanelToEnd() {
+function scrollPanel(back) {
   const scrollable = (el) => {
     const { overflowY } = getComputedStyle(el);
     return (overflowY === 'auto' || overflowY === 'scroll')
@@ -267,7 +361,7 @@ function scrollPanelToEnd() {
   }
   if (panel == null) return null;
 
-  panel.scrollTop = panel.scrollHeight;
+  panel.scrollTop = back ? Math.max(0, panel.scrollTop - 1500) : panel.scrollHeight;
   const box = panel.getBoundingClientRect();
   return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
 }
@@ -279,19 +373,33 @@ function scrollPanelToEnd() {
  * die Orte kommen ueber das Netz, und beim Scrollen laedt Google nach. Bei der
  * Kartensuche kam die erste Antwort sogar voellig ohne Orte - ohne Scrollen
  * bliebe es dabei.
+ *
+ * `missing()` sagt, wie viele Orte laut Kopf der Liste noch fehlen (null:
+ * unbekannt). Fehlen noch welche, reichen drei ruhige Runden nicht als Beweis
+ * fuer "zu Ende": so blieb es bei zwei Antworten und 37 von 42 Orten. Dann
+ * wird laenger gewartet, und jede zweite Runde geht es ein Stueck zurueck -
+ * steht der Container schon am Ende, loest erst ein erneutes Hinunterscrollen
+ * das Nachladen wieder aus.
  */
-async function scrollUntilSettled(page, count, { rounds = 60, settle = 3, pause = 1200 } = {}) {
+async function scrollUntilSettled(page, count, {
+  missing = () => null, rounds = 60, settle = 3, patience = 10, pause = 1200
+} = {}) {
   let last = -1;
   let stable = 0;
 
-  for (let i = 0; i < rounds && stable < settle; i++) {
-    const target = await page.evaluate(scrollPanelToEnd);
+  for (let i = 0; i < rounds; i++) {
+    const left = missing();
+    if (left === 0) break;
+    if (stable >= (left == null ? settle : patience)) break;
+
+    const back = left != null && stable % 2 === 1;
+    const target = await page.evaluate(scrollPanel, back);
     // Zusaetzlich das Mausrad ueber dem Panel: Google haengt das Nachladen
     // teils an Wheel-Events statt an die Scrollposition, und so scrollt auch
     // ein Nutzer.
     if (target) {
       await page.mouse.move(target.x, target.y);
-      await page.mouse.wheel(0, 4000);
+      await page.mouse.wheel(0, back ? -1500 : 4000);
     }
     await page.waitForTimeout(pause);
 
@@ -307,47 +415,42 @@ async function scrollUntilSettled(page, count, { rounds = 60, settle = 3, pause 
 }
 
 /**
- * -> { places, diagnosis, responses }. `diagnosis` beschreibt die Seite, wenn
- * keine Orte kamen, und ist sonst null. `responses` zaehlt die mitgelesenen
- * Antworten - bleibt es bei einer, hat das Nachladen nicht gegriffen.
- *
- * Null Orte sind hier kein Fehler mehr: eine geleerte Liste sieht genauso aus
- * wie ein gebrochener Scraper, und nur build.mjs kennt den vorigen Stand, an
- * dem sich das entscheiden laesst. Geworfen wird nur, wenn gar keine Liste
- * geladen hat.
+ * Ein Durchgang mit frischem Profil. Haengt die gefundenen Orte an `collected`
+ * an - das sammelt ueber alle Durchgaenge - und gibt
+ * { expected, responses, unreadable, diagnosis } zurueck.
  */
-export async function scrapeList(url, { locale = 'de-DE', timeout = 60000, headless = true } = {}) {
-  const { chromium } = await import('playwright');
-  // Ohne das Flag setzt Chromium navigator.webdriver, und Google liefert
-  // Automaten gern eine andere Seite aus als Besuchern.
-  const browser = await chromium.launch({
-    headless,
-    args: ['--disable-blink-features=AutomationControlled']
+async function scrapeOnce(browser, url, collected, { locale, timeout, expected }) {
+  const context = await browser.newContext({
+    locale,
+    viewport: { width: 1280, height: 1600 },
+    // Der Standard sagt "HeadlessChrome". Die Version kommt aus dem Browser
+    // selbst, damit sie mitwaechst.
+    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+      + `(KHTML, like Gecko) Chrome/${browser.version()} Safari/537.36`
   });
   try {
-    const context = await browser.newContext({
-      locale,
-      viewport: { width: 1280, height: 1600 },
-      // Der Standard sagt "HeadlessChrome". Die Version kommt aus dem Browser
-      // selbst, damit sie mitwaechst.
-      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
-        + `(KHTML, like Gecko) Chrome/${browser.version()} Safari/537.36`
-    });
     await context.addCookies(CONSENT_COOKIES);
     const page = await context.newPage();
 
-    // Mitlesen, bevor navigiert wird - die erste Antwort kommt sofort.
-    const collected = [];
+    // Mitlesen, bevor navigiert wird - die erste Antwort kommt sofort. Die
+    // Bodies werden asynchron gelesen; was noch laeuft, wird unten abgewartet,
+    // sonst schliesst der Browser darueber und die Orte fallen still weg.
     let responses = 0;
-    page.on('response', async (response) => {
-      if (!response.url().includes(PAYLOAD_URL)) return;
+    let unreadable = 0;
+    const pending = new Set();
+    page.on('response', (response) => {
+      const fromList = response.url().includes(LIST_URL);
+      if (!fromList && !response.url().includes(PAYLOAD_URL)) return;
       responses++;
-      try {
-        collected.push(...placesFromPayload(await response.text()));
-      } catch {
-        // Body nicht mehr lesbar (Navigation dazwischen) - die naechste Antwort
-        // bringt dieselben Orte noch einmal.
-      }
+      const read = response.text()
+        .then((body) => {
+          collected.push(...(fromList ? placesFromList(body) : placesFromPayload(body)));
+        })
+        // Body nicht mehr lesbar (Navigation dazwischen). Gezaehlt, nicht
+        // verschwiegen: genau so gehen Orte verloren.
+        .catch(() => { unreadable++; })
+        .finally(() => pending.delete(read));
+      pending.add(read);
     });
 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
@@ -363,13 +466,79 @@ export async function scrapeList(url, { locale = 'de-DE', timeout = 60000, headl
         + `${await describePage(page, { responses, places: collected.length })}`);
     }
 
-    await scrollUntilSettled(page, () => collected.length);
+    const shown = expected ?? await readListCount(page);
+    const missing = () => (shown == null ? null : Math.max(0, shown - dedupe(collected).length));
+    await scrollUntilSettled(page, () => collected.length, { missing });
+    await Promise.allSettled([...pending]);
 
-    const places = dedupe(collected);
-    const diagnosis = places.length === 0
+    const diagnosis = collected.length === 0
       ? await describePage(page, { responses, places: 0 })
       : null;
-    return { places, diagnosis, responses };
+    return { expected: shown, responses, unreadable, diagnosis };
+  } finally {
+    await context.close();
+  }
+}
+
+/**
+ * -> { places, expected, diagnosis, responses, unreadable, attempts }.
+ *
+ * `expected` ist die Anzahl laut Kopf der Liste, oder null, wenn sie nicht zu
+ * lesen war. Ob `places` dazu passt, entscheidet build.mjs. Hier wird nur so
+ * lange nachgefasst, bis es passt: fehlen Orte, folgt ein neuer Durchgang mit
+ * frischem Profil, und die Ergebnisse werden vereinigt. Alle Durchgaenge
+ * liegen Minuten auseinander und sehen dieselbe Liste - was einer gefunden
+ * hat, gehoert dazu, auch wenn der naechste es verpasst. Ohne Soll-Zahl bleibt
+ * es bei einem Durchgang, wie bisher.
+ *
+ * `diagnosis` beschreibt die Seite, wenn keine Orte kamen, und ist sonst null.
+ * `responses` zaehlt die mitgelesenen Antworten - bleibt es bei einer, hat das
+ * Nachladen nicht gegriffen. `unreadable` zaehlt Antworten, deren Inhalt nicht
+ * mehr zu lesen war.
+ *
+ * Null Orte sind hier kein Fehler mehr: eine geleerte Liste sieht genauso aus
+ * wie ein gebrochener Scraper, und nur build.mjs kennt den vorigen Stand, an
+ * dem sich das entscheiden laesst. Geworfen wird nur, wenn in keinem
+ * Durchgang eine Liste geladen hat.
+ */
+export async function scrapeList(url, {
+  locale = 'de-DE', timeout = 60000, headless = true, attempts = 3
+} = {}) {
+  const { chromium } = await import('playwright');
+  // Ohne das Flag setzt Chromium navigator.webdriver, und Google liefert
+  // Automaten gern eine andere Seite aus als Besuchern.
+  const browser = await chromium.launch({
+    headless,
+    args: ['--disable-blink-features=AutomationControlled']
+  });
+  try {
+    const collected = [];
+    let expected = null;
+    let responses = 0;
+    let unreadable = 0;
+    let diagnosis = null;
+    let loaded = false;
+    let lastError = null;
+    let tries = 0;
+
+    while (tries < attempts) {
+      tries++;
+      try {
+        const run = await scrapeOnce(browser, url, collected, { locale, timeout, expected });
+        loaded = true;
+        expected = run.expected;
+        responses += run.responses;
+        unreadable += run.unreadable;
+        diagnosis = run.diagnosis;
+      } catch (error) {
+        lastError = error;
+        continue;
+      }
+      if (expected == null || dedupe(collected).length >= expected) break;
+    }
+    if (!loaded) throw lastError;
+
+    return { places: dedupe(collected), expected, diagnosis, responses, unreadable, attempts: tries };
   } finally {
     await browser.close();
   }
@@ -391,9 +560,12 @@ async function main() {
       continue;
     }
     try {
-      const { places, diagnosis, responses } = await scrapeList(url);
-      lists[list.name] = { ok: true, places };
-      console.log(`${list.name}: ${places.length} Orte aus ${responses} Antworten`);
+      const { places, expected, diagnosis, responses, unreadable, attempts } = await scrapeList(url);
+      lists[list.name] = { ok: true, places, expected };
+      const soll = expected == null ? ' (Anzahl der Liste nicht lesbar)' : ` von ${expected}`;
+      const lost = unreadable > 0 ? `, ${unreadable} nicht lesbar` : '';
+      console.log(`${list.name}: ${places.length}${soll} Orte aus ${responses} Antworten${lost}, `
+        + `${attempts} ${attempts === 1 ? 'Durchgang' : 'Durchgaenge'}`);
       if (diagnosis) {
         // Leer ist erlaubt, aber verdaechtig - bricht der Scraper, ist das hier
         // die einzige Stelle, an der man es sieht.

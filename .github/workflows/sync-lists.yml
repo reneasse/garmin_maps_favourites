@@ -4,9 +4,12 @@ name: sync-lists
 # GitHub Pages muss dafuer auf "Deploy from a branch", Branch main, Ordner
 # /docs stehen.
 #
-# Der Job schlaegt fehl, wenn eine Liste nicht abrufbar war oder die Sperre in
-# build.mjs angesprungen ist. Der alte Stand bleibt dann veroeffentlicht - das
-# ist Absicht: eine leere Liste wuerde die Favoriten auf dem Geraet loeschen.
+# Der Job schlaegt fehl, wenn eine Liste nicht abrufbar war, nur teilweise
+# ausgelesen wurde (weniger Orte als der Kopf der Google-Liste nennt) oder die
+# Sperre in build.mjs angesprungen ist. Der alte Stand bleibt dann
+# veroeffentlicht - das ist Absicht: eine leere oder halbe Liste wuerde
+# Favoriten auf dem Geraet loeschen. allow_shrink hebt nur die Leer-Sperre auf,
+# nie die Vollstaendigkeitspruefung.
 #
 # Gesperrt wird nur eine leer gewordene Liste. Eine stark verkleinerte geht
 # ohne Zutun durch und hinterlaesst nur eine Warnung am Lauf.

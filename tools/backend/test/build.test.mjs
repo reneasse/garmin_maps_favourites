@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 
 import {
   cutToBytes, foldToAscii, normaliseName, normalise, roundCoord, validCoord,
-  hashEntries, listId, paginate, guard, shrinkAllowed, findPrevious, catalogChanged,
-  SCHEMA_VERSION
+  hashEntries, listId, paginate, guard, completeness, shrinkAllowed, findPrevious,
+  catalogChanged, SCHEMA_VERSION
 } from '../build.mjs';
 import {
   parseUrlOverrides, usableUrl, splitJsonObjects, unwrapPayload,
-  placesFromPayload, dedupe
+  placesFromPayload, placesFromList, dedupe, countFromText
 } from '../scrape.mjs';
 
 /**
@@ -164,6 +164,48 @@ test('die Sperre haelt nur leere Listen zurueck', () => {
   assert.equal(guard(0, 0).ok, true);
 });
 
+test('eine halb ausgelesene Liste wird nicht veroeffentlicht', () => {
+  // Der Fall, der das ausgeloest hat: zwei Antworten, 37 von 42 Orten, bei
+  // jedem Lauf andere - das Geraet loeschte und legte Favoriten im Wechsel an.
+  assert.deepEqual(completeness(37, 42),
+    { ok: false, reason: 'unvollstaendig, 37 von 42 Orten ausgelesen' });
+  assert.equal(completeness(0, 42).ok, false);
+
+  assert.deepEqual(completeness(42, 42), { ok: true, reason: '' });
+  assert.deepEqual(completeness(0, 0), { ok: true, reason: '' });
+  // Mehr als angezeigt sperrt nicht, faellt aber auf.
+  assert.equal(completeness(43, 42).ok, true);
+  assert.notEqual(completeness(43, 42).reason, '');
+});
+
+test('ohne lesbare Anzahl geht die Liste mit Warnung durch', () => {
+  // Sonst stuende jede Liste still, sobald Google den Listenkopf umbaut - und
+  // ein Cache von vor der Pruefung kennt das Feld gar nicht.
+  for (const expected of [null, undefined, NaN, -1, 4.5, '42']) {
+    const verdict = completeness(37, expected);
+    assert.equal(verdict.ok, true);
+    assert.match(verdict.reason, /nicht lesbar/);
+  }
+});
+
+test('die Anzahl kommt aus dem Kopf der Liste', () => {
+  assert.equal(countFromText('Garmin\nRene · 42 Orte\nALDI SÜD'), 42);
+  assert.equal(countFromText('Privat · 1 Ort'), 1);
+  // Geschuetztes Leerzeichen und Zeilenumbruch zwischen Zahl und Wort.
+  assert.equal(countFromText('42 Orte'), 42);
+  assert.equal(countFromText('42\nOrte'), 42);
+  // Der Kopf steht vorn, spaetere Treffer zaehlen nicht.
+  assert.equal(countFromText('42 Orte\nNotiz: 3 Orte weiter links'), 42);
+
+  // Was nur so aussieht, zaehlt nicht.
+  assert.equal(countFromText('12 Ortschaften'), null);
+  assert.equal(countFromText('3 place de la Gare'), null);
+  assert.equal(countFromText('4,5 Orte'), null);
+  assert.equal(countFromText('Am Ort 3'), null);
+  assert.equal(countFromText(''), null);
+  assert.equal(countFromText(null), null);
+});
+
 test('nur ein ausdrueckliches true hebt die Sperre auf', () => {
   assert.equal(shrinkAllowed('true'), true);
   assert.equal(shrinkAllowed(' TRUE '), true);
@@ -270,6 +312,46 @@ test('nur Orte zaehlen, nicht jedes Koordinatenpaar', () => {
 
   assert.deepEqual(placesFromPayload(''), []);
   assert.deepEqual(placesFromPayload('kein json'), []);
+});
+
+/**
+ * Eine getlist-Antwort: die Liste selbst, ein Array hinter dem XSSI-Vorspann.
+ * Die Form stammt aus einer echten Antwort, die Inhalte sind erfunden.
+ */
+function liste(...eintraege) {
+  const rows = eintraege.map((e) => {
+    const kennung = e.kennung ? `,${JSON.stringify(e.kennung)}` : '';
+    return `[null,[null,null,"",null,"",[null,null,${e.lat},${e.lon}]${kennung}],`
+      + `${JSON.stringify(e.name)},"",null,null,null,[],[[1],null,[null,null,${e.lat},${e.lon}]]]`;
+  });
+  return `)]}'\n[[["abc",1,null,1,1],4,[2,1,"https://x"],["Jemand"],"Garmin","",null,null,[${rows.join(',')}]]]`;
+}
+
+test('getlist liefert auch Pins ohne Ortskennung', () => {
+  // Ein gesetzter Pin ist kein Google-Ort und taucht in /search nie auf -
+  // genau dieser Eintrag ging frueher still verloren.
+  const places = placesFromList(liste(
+    { name: '49°25\'25.8"N 7°34\'08.0"E', lat: 49.423829, lon: 7.568892 },
+    { name: 'ALDI SÜD', lat: 49.415729, lon: 7.573523, kennung: ['5158439181059265237', '-6426135483264128656'] }
+  ));
+
+  assert.equal(places.length, 2);
+  assert.deepEqual(places[0], { id: undefined, name: '49°25\'25.8"N 7°34\'08.0"E', lat: 49.423829, lon: 7.568892 });
+  // Dieselbe Kennung wie in /search, sonst zaehlt dedupe den Ort doppelt.
+  assert.equal(places[1].id, '0x4796751ac67e92d5:0xa6d1c7d339822970');
+
+  assert.deepEqual(placesFromList(''), []);
+  assert.deepEqual(placesFromList(null), []);
+});
+
+test('ein Ort aus getlist und /search zaehlt einmal', () => {
+  const ausListe = placesFromList(liste(
+    { name: 'Cafe', lat: 48.1, lon: 11.1, kennung: ['10', '-1'] }
+  ));
+  const ausSuche = placesFromPayload(antwort(
+    { id: '0xa:0xffffffffffffffff', name: 'Cafe', lat: 48.1, lon: 11.1 }
+  ));
+  assert.equal(dedupe([...ausListe, ...ausSuche]).length, 1);
 });
 
 test('dedupe haelt jeden Ort nur einmal und legt die Kennung ab', () => {

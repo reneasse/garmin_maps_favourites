@@ -215,7 +215,7 @@ function queueSkipsUnchangedLists(logger as Test.Logger) as Boolean {
     Settings.load();
     Settings.maxFavourites = 200;
     SyncStore.forgetAll();
-    SyncStore.saveList("aa", "h1", ["X"] as Array<String>);
+    SyncStore.saveList("aa", "h1", ["X"] as Array<String>, [48.1, 11.1] as Array<Float>);
 
     var cat = Feed.parseCatalog({
         "v" => 1,
@@ -241,7 +241,7 @@ function queueRefetchesAfterIncompleteRun(logger as Test.Logger) as Boolean {
     Settings.load();
     Settings.maxFavourites = 200;
     SyncStore.forgetAll();
-    SyncStore.saveList("aa", "", ["X"] as Array<String>);
+    SyncStore.saveList("aa", "", ["X"] as Array<String>, [48.1, 11.1] as Array<Float>);
 
     var cat = Feed.parseCatalog({
         "v" => 1,
@@ -250,6 +250,29 @@ function queueRefetchesAfterIncompleteRun(logger as Test.Logger) as Boolean {
     var engine = new SyncEngine(true, null);
     var queue = engine.buildQueue(cat, ["aa"] as Array<String>);
     Test.assertEqual(queue.size(), 1);
+
+    SyncStore.forgetAll();
+    return true;
+}
+
+(:test)
+function queueRefetchesStateWithoutCoords(logger as Test.Logger) as Boolean {
+    // Ein Zustand aus der Zeit, als nur Namen verglichen wurden: der Hash
+    // stimmt, aber wo die Orte stehen, weiss niemand. Einmal neu abgleichen,
+    // sonst blieben falsch nummerierte Orte fuer immer an der falschen Stelle.
+    Settings.load();
+    Settings.maxFavourites = 200;
+    SyncStore.forgetAll();
+    SyncStore.set(SyncStore.listKey("aa"), { "h" => "h1", "n" => ["X"] });
+    SyncStore.rememberId("aa");
+    Test.assert(!SyncStore.hasCoords("aa"));
+
+    var cat = Feed.parseCatalog({
+        "v" => 1,
+        "l" => [{ "i" => "aa", "n" => "Alt", "c" => 1, "h" => "h1", "p" => 1 }]
+    });
+    var engine = new SyncEngine(true, null);
+    Test.assertEqual(engine.buildQueue(cat, ["aa"] as Array<String>).size(), 1);
 
     SyncStore.forgetAll();
     return true;
@@ -290,6 +313,83 @@ function completenessFollowsTheDeviceNotTheReturnValue(logger as Test.Logger) as
     Test.assert(!engine.isComplete(desired, ["A", "B"] as Array<String>, true));
     // Budget aufgebraucht schlaegt auch dann durch, wenn zufaellig alles steht.
     Test.assert(!engine.isComplete(desired, ["A", "B", "C"] as Array<String>, false));
+    return true;
+}
+
+(:test)
+function heldStateKeepsOnlyWhatWasWritten(logger as Test.Logger) as Boolean {
+    // Der Fehler im Hintergrund: 37 neue Orte, Budget 20. Gemerkt wurde das
+    // ganze Soll - der naechste Lauf fand keine Differenz mehr, meldete
+    // "Aktuell", und 17 Orte kamen nie an. Gemerkt wird jetzt nur, was
+    // geschrieben wurde; der Rest bleibt fuer den naechsten Lauf offen.
+    var engine = new SyncEngine(true, null);
+    var desired = ["A", "B", "C"] as Array<String>;
+    var wanted = [48.1, 11.1, 48.2, 11.2, 48.3, 11.3] as Array<Float>;
+    var none = [] as Array<String>;
+
+    var held = engine.heldState(desired, wanted, none,
+        [false, false, false] as Array<Boolean>, none,
+        ["A", "B"] as Array<String>, null, none, [] as Array<Float>);
+    var names = held[0] as Array<String>;
+    Test.assertEqual(names.size(), 2);
+    Test.assert(!Util.contains(names, "C"));
+    Test.assertEqual((held[1] as Array<Float>).size(), 4);
+    Test.assert(!engine.isComplete(desired, names, false));
+
+    // Der naechste Lauf vergleicht mit dem Gemerkten - und findet "C".
+    Test.assertEqual(Util.difference(desired, names).size(), 1);
+    return true;
+}
+
+(:test)
+function heldStateKeepsTheOldSpotOfAPendingMove(logger as Test.Logger) as Boolean {
+    // Reichte das Budget nicht fuer den Umzug, steht der Ort noch an der
+    // alten Stelle - und genau die wird gemerkt, damit der naechste Lauf den
+    // Unterschied wieder sieht. Ein fuer den Umzug geloeschter, aber nicht
+    // wieder geschriebener Ort fehlt dagegen.
+    var engine = new SyncEngine(true, null);
+    var desired = ["A", "B"] as Array<String>;
+    var old = ["A", "B"] as Array<String>;
+    var held = engine.heldState(desired, [48.5, 11.5, 48.6, 11.6] as Array<Float>, old,
+        [false, false] as Array<Boolean>, ["B"] as Array<String>, [] as Array<String>,
+        null, old, [48.1, 11.1, 48.2, 11.2] as Array<Float>);
+
+    var names = held[0] as Array<String>;
+    var coords = held[1] as Array<Float>;
+    Test.assertEqual(names.size(), 1);
+    Test.assertEqual(names[0], "A");
+    Test.assert(Util.near(coords[0], coords[1], 48.1, 11.1));
+    return true;
+}
+
+(:test)
+function settledComparesTheSpotNotJustTheName(logger as Test.Logger) as Boolean {
+    // Der Fall aus der echten Liste: "ALDI SUeD 2" meinte erst den ALDI bei
+    // 49.949, nach einer Aenderung in Google den bei 49.490. Ueber den Namen
+    // allein sah das Geraet keinen Unterschied und schrieb nichts.
+    var engine = new SyncEngine(false, null);
+    var old = ["ALDI SUeD 2"] as Array<String>;
+    var coords = [49.94946, 7.78605] as Array<Float>;
+    var none = [] as Array<String>;
+
+    Test.assert(engine.isSettled("ALDI SUeD 2", 49.94946, 7.78605, old, coords, none));
+    Test.assert(!engine.isSettled("ALDI SUeD 2", 49.49014, 7.90102, old, coords, none));
+    // Unbekannte Koordinate heisst: umziehen.
+    Test.assert(!engine.isSettled("ALDI SUeD 2", 49.94946, 7.78605, old, [] as Array<Float>, none));
+    Test.assert(!engine.isSettled("Neu", 49.94946, 7.78605, old, coords, none));
+    // Beansprucht eine andere Liste den Namen, wird er nicht angefasst.
+    Test.assert(engine.isSettled("ALDI SUeD 2", 49.49014, 7.90102, old, coords, old));
+    return true;
+}
+
+(:test)
+function nearToleratesFloatRounding(logger as Test.Logger) as Boolean {
+    // Durch Storage gehen Koordinaten als Float - ein genauer Vergleich hielte
+    // danach jeden Ort fuer verschoben.
+    Test.assert(Util.near(50.75118, 6.15721, 50.751183, 6.157208));
+    Test.assert(Util.near(-33.86881, 151.20931, -33.86881, 151.209315));
+    Test.assert(!Util.near(49.94946, 7.78605, 49.49014, 7.90102));
+    Test.assert(!Util.near(48.1, 11.1, 48.1002, 11.1));
     return true;
 }
 
@@ -536,11 +636,14 @@ function foldedNamesSurviveTheDevice(logger as Test.Logger) as Boolean {
 (:test)
 function storeRoundTripsListState(logger as Test.Logger) as Boolean {
     SyncStore.forgetAll();
-    SyncStore.saveList("aa", "h1", ["Eins", "Zwei"] as Array<String>);
-    SyncStore.saveList("bb", "h2", ["Drei"] as Array<String>);
+    SyncStore.saveList("aa", "h1", ["Eins", "Zwei"] as Array<String>,
+        [48.1, 11.1, 48.2, 11.2] as Array<Float>);
+    SyncStore.saveList("bb", "h2", ["Drei"] as Array<String>, [48.3, 11.3] as Array<Float>);
 
     Test.assertEqual(SyncStore.listHash("aa"), "h1");
     Test.assertEqual(SyncStore.listNames("aa").size(), 2);
+    Test.assertEqual(SyncStore.listCoords("aa").size(), 4);
+    Test.assert(SyncStore.hasCoords("aa"));
     Test.assertEqual(SyncStore.syncedCount(), 3);
 
     // Was andere Listen beanspruchen, darf beim Loeschen nicht mitgehen.

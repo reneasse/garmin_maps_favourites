@@ -132,6 +132,66 @@ test('auch die Kennziffer passt ins Byte-Budget', () => {
   for (const entry of entries) assert.ok(Buffer.byteLength(entry[0], 'utf8') <= 15);
 });
 
+test('bekannte Orte behalten ihre Kennziffer, neue bekommen die erste freie', () => {
+  // Der Fall aus der echten Liste: ein ALDI kommt suedlich der anderen dazu,
+  // der noerdlichste faellt weg. Nach Sortierung durchgezaehlt, stuenden
+  // danach dieselben vier Namen da wie vorher - das Geraet saehe keine
+  // Aenderung, der neue Ort kaeme nie an, der entfernte bliebe stehen.
+  const previous = [
+    ['ALDI SUeD', 49.41573, 7.57352],
+    ['ALDI SUeD 2', 49.94946, 7.78605],
+    ['ALDI SUeD 3', 49.95146, 7.4053],
+    ['ALDI SUeD 4', 50.75118, 6.15721]
+  ];
+  const entries = normalise([
+    { name: 'ALDI SÜD', lat: 49.41573, lon: 7.57352 },
+    { name: 'ALDI SÜD', lat: 49.49014, lon: 7.90102 },
+    { name: 'ALDI SÜD', lat: 49.94946, lon: 7.78605 },
+    { name: 'ALDI SÜD', lat: 49.95146, lon: 7.4053 }
+  ], { nameMaxLength: 15, previous });
+
+  assert.deepEqual(entries, [
+    ['ALDI SUeD', 49.41573, 7.57352],
+    ['ALDI SUeD 4', 49.49014, 7.90102],
+    ['ALDI SUeD 2', 49.94946, 7.78605],
+    ['ALDI SUeD 3', 49.95146, 7.4053]
+  ]);
+});
+
+test('ohne Vorgaenger und bei unveraenderter Liste aendert sich nichts', () => {
+  const places = [
+    { name: 'REWE', lat: 50.4, lon: 7.4 },
+    { name: 'REWE', lat: 49.6, lon: 7.8 },
+    { name: 'Shell', lat: 50.6, lon: 6.6 }
+  ];
+  const first = normalise(places);
+  assert.deepEqual(first.map((e) => e[0]), ['REWE', 'REWE 2', 'Shell']);
+  // Zweiter Lauf mit dem eigenen Ergebnis als Vorgaenger: derselbe Hash.
+  assert.deepEqual(normalise(places, { previous: first }), first);
+});
+
+test('ein frei gewordener Name geht an den naechsten neuen Ort', () => {
+  // Faellt der unnummerierte weg, rueckt nichts nach - die uebrigen behalten
+  // ihre Nummer, und erst ein neuer Ort bekommt den freien Rumpf.
+  const previous = [['Cafe', 48.1, 11.1], ['Cafe 2', 48.2, 11.2]];
+  const entries = normalise([
+    { name: 'Cafe', lat: 48.2, lon: 11.2 },
+    { name: 'Cafe', lat: 48.3, lon: 11.3 }
+  ], { previous });
+  assert.deepEqual(entries.map((e) => e[0]), ['Cafe 2', 'Cafe']);
+});
+
+test('ein alter Name, der nicht mehr zum Rumpf passt, wird nicht geerbt', () => {
+  // Gleiche Koordinate, aber in Google umbenannt: der neue Name zaehlt.
+  const entries = normalise([{ name: 'Baeckerei', lat: 48.1, lon: 11.1 }], {
+    previous: [['Cafe 2', 48.1, 11.1]]
+  });
+  assert.equal(entries[0][0], 'Baeckerei');
+
+  // Kaputter Vorgaenger bricht nichts.
+  assert.equal(normalise([{ name: 'A', lat: 48.1, lon: 11.1 }], { previous: [null, 'x', [1]] })[0][0], 'A');
+});
+
 test('der Hash haengt nur am Inhalt, nicht an der Eingabereihenfolge', () => {
   const a = normalise([
     { name: 'B', lat: 48.2, lon: 11.2 },
